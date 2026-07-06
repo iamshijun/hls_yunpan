@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>网盘HLS播放器</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #fff;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            padding: 30px 0;
+        }
+
+        .header h1 {
+            font-size: 2rem;
+            margin-bottom: 10px;
+            background: linear-gradient(90deg, #00d2ff, #3a7bd5);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .input-section {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 30px;
+            margin-bottom: 20px;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .input-group input {
+            flex: 1;
+            padding: 15px 20px;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.05);
+            color: #fff;
+            font-size: 1rem;
+            outline: none;
+            transition: all 0.3s;
+        }
+
+        .input-group input:focus {
+            border-color: #00d2ff;
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .input-group input::placeholder {
+            color: rgba(255, 255, 255, 0.5);
+        }
+
+        .btn {
+            padding: 15px 30px;
+            border: none;
+            border-radius: 10px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: 600;
+        }
+
+        .btn-primary {
+            background: linear-gradient(90deg, #00d2ff, #3a7bd5);
+            color: #fff;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(0, 210, 255, 0.3);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .example-text {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 0.9rem;
+            margin-top: 10px;
+        }
+
+        .player-section {
+            background: rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 20px;
+            display: none;
+        }
+
+        .player-section.active {
+            display: block;
+        }
+
+        #video {
+            width: 100%;
+            max-width: 100%;
+            border-radius: 10px;
+            aspect-ratio: 16/9;
+            background: #000;
+        }
+
+        .player-info {
+            margin-top: 15px;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .player-info span {
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        .status {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .status.loading {
+            background: #ffa500;
+            color: #fff;
+        }
+
+        .status.playing {
+            background: #00d2ff;
+            color: #fff;
+        }
+
+        .status.error {
+            background: #ff4757;
+            color: #fff;
+        }
+
+        .error-message {
+            color: #ff4757;
+            margin-top: 15px;
+            padding: 15px;
+            background: rgba(255, 71, 87, 0.1);
+            border-radius: 10px;
+            display: none;
+        }
+
+        .error-message.show {
+            display: block;
+        }
+
+        .help-section {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+
+        .help-section h3 {
+            margin-bottom: 10px;
+            color: #00d2ff;
+        }
+
+        .help-section ul {
+            list-style: none;
+            padding-left: 0;
+        }
+
+        .help-section li {
+            padding: 8px 0;
+            color: rgba(255, 255, 255, 0.7);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .help-section li:last-child {
+            border-bottom: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>网盘HLS播放器</h1>
+            <p>基于百度网盘的HLS媒体流播放服务</p>
+        </div>
+
+        <div class="input-section">
+            <div class="input-group">
+                <input type="text" id="mediaPath" placeholder="输入媒体目录路径，例如: hdsn-006 或 movies/我的视频">
+                <button class="btn btn-primary" onclick="loadVideo()">播放</button>
+            </div>
+            <p class="example-text">
+                提示：输入网盘目录路径，系统会自动加载同名的 .m3u8 文件<br>
+                例如：网盘路径 /apps/movies/video1/ → 输入 video1
+            </p>
+        </div>
+
+        <div class="player-section" id="playerSection">
+            <video id="video" controls></video>
+            <div class="player-info">
+                <div>
+                    <span id="currentPath">当前播放: </span>
+                </div>
+                <div>
+                    <span class="status" id="status">准备就绪</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="error-message" id="errorMessage"></div>
+
+        <div class="help-section">
+            <h3>使用说明</h3>
+            <ul>
+                <li>• 网盘文件结构：/apps/movies/目录名/目录名.m3u8 + 分片文件</li>
+                <li>• 输入目录名（如 hdsn-006），自动加载 hdsn-006.m3u8</li>
+                <li>• 支持子目录：如 movies/我的视频</li>
+                <li>• m3u8文件必须与目录同名</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        const video = document.getElementById('video');
+        const mediaPathInput = document.getElementById('mediaPath');
+        const playerSection = document.getElementById('playerSection');
+        const statusEl = document.getElementById('status');
+        const errorMessage = document.getElementById('errorMessage');
+        const currentPathEl = document.getElementById('currentPath');
+
+        let hls = null;
+
+        function showStatus(status, text) {
+            statusEl.className = 'status ' + status;
+            statusEl.textContent = text;
+        }
+
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorMessage.classList.add('show');
+            showStatus('error', '播放失败');
+        }
+
+        function hideError() {
+            errorMessage.classList.remove('show');
+        }
+
+        function loadVideo() {
+            hideError();
+
+            const path = mediaPathInput.value.trim();
+            if (!path) {
+                showError('请输入媒体目录路径');
+                return;
+            }
+
+            // 移除开头的斜杠（如果有）
+            const cleanPath = path.startsWith('/') ? path.substring(1) : path;
+
+            // 获取目录名（最后一个/后面的部分）
+            const dirName = cleanPath.split('/').pop();
+
+            // 构建m3u8 URL
+            const m3u8Url = `http://localhost:9009/hls/${cleanPath}/${dirName}.m3u8`;
+
+            console.log('播放地址:', m3u8Url);
+
+            playerSection.classList.add('active');
+            currentPathEl.textContent = `当前播放: /apps/movies/${cleanPath}/${dirName}.m3u8`;
+            showStatus('loading', '加载中...');
+
+            if (hls) {
+                hls.destroy();
+            }
+
+            if (Hls.isSupported()) {
+                hls = new Hls({
+                    enableWorker: true,
+                    lowLatencyMode: true,
+                });
+
+                hls.loadSource(m3u8Url);
+                hls.attachMedia(video);
+
+                hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                    showStatus('playing', '播放中');
+                    video.play().catch(e => {
+                        console.error('自动播放失败:', e);
+                    });
+                });
+
+                hls.on(Hls.Events.ERROR, function(event, data) {
+                    console.error('HLS错误:', data);
+
+                    if (data.fatal) {
+                        switch (data.type) {
+                            case Hls.ErrorTypes.NETWORK_ERROR:
+                                showError('网络错误，无法加载媒体文件');
+                                hls.startLoad();
+                                break;
+                            case Hls.ErrorTypes.MEDIA_ERROR:
+                                showError('媒体错误，尝试恢复...');
+                                hls.recoverMediaError();
+                                break;
+                            default:
+                                showError('无法播放: ' + (data.details || '未知错误'));
+                                hls.destroy();
+                        }
+                    }
+                });
+
+            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                // Safari原生支持
+                video.src = m3u8Url;
+                video.addEventListener('loadedmetadata', function() {
+                    showStatus('playing', '播放中');
+                    video.play().catch(e => {
+                        console.error('自动播放失败:', e);
+                    });
+                });
+
+                video.addEventListener('error', function() {
+                    showError('播放失败，请检查文件是否存在');
+                });
+
+            } else {
+                showError('您的浏览器不支持HLS播放');
+            }
+        }
+
+        // 回车键播放
+        mediaPathInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                loadVideo();
+            }
+        });
+
+        // URL参数支持
+        const urlParams = new URLSearchParams(window.location.search);
+        const pathParam = urlParams.get('path');
+        if (pathParam) {
+            mediaPathInput.value = pathParam;
+            loadVideo();
+        }
+    </script>
+</body>
+</html>
