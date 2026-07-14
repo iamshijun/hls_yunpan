@@ -3,7 +3,7 @@ from fastapi import Response
 from fastapi.responses import StreamingResponse
 import asyncio
 import os
-from typing import Optional
+from typing import Optional, AsyncIterator
 import logging
 from .baiduyun_service import BaiduYunService
 from .cache_service import CacheService
@@ -18,11 +18,13 @@ class HLSProxyService:
         self,
         yun_service: BaiduYunService,
         cache_service: CacheService,
-        hls_root_path: str = "/hls"
+        hls_root_path: str = "/hls",
+        cache_segments: bool = False
     ):
         self.yun_service = yun_service
         self.cache_service = cache_service
         self.hls_root_path = hls_root_path
+        self.cache_segments = cache_segments
         self.parser = M3U8Parser()
         self.dir_locks = {}  # 目录加载锁: {dir_path: Lock}
 
@@ -154,6 +156,7 @@ class HLSProxyService:
             # 尝试从缓存获取
             content = await self.cache_service.get(yun_path)
             if content:
+                # 启用缓存时使用缓存的文件内容和长缓存时间
                 return Response(
                     content=content,
                     media_type="video/mp2t",
@@ -179,19 +182,22 @@ class HLSProxyService:
                     content=f"File not found: {yun_path}"
                 )
 
-            # 从网盘下载（使用fsid）
-            content = await self.yun_service.download_file(yun_path, fsid=fsid)
+            # 流式下载 — 边下边发给客户端，避免等待全部下载导致超时
+            if self.cache_segments:
+                # 启用缓存时使用长缓存时间
+                cache_header = "public, max-age=86400"
+            else:
+                # 禁用缓存时使用no-cache
+                cache_header = "no-cache"
+                logger.info(f"分片缓存已禁用，流式下载并跳过缓存: {yun_path}")
 
-            # 缓存文件
-            await self.cache_service.set(yun_path, content)
-
-            return Response(
-                content=content,
+            return StreamingResponse(
+                self._stream_and_cache_chunk(yun_path, fsid),
                 media_type="video/mp2t",
                 headers={
-                    "Cache-Control": "public, max-age=86400",
-                    "Access-Control-Allow-Origin": "*"
-                }
+                    "Cache-Control": cache_header,
+                    "Access-Control-Allow-Origin": "*",
+                },
             )
 
         except Exception as e:
@@ -202,6 +208,24 @@ class HLSProxyService:
                 status_code=500,
                 content=f"Error: {str(e)}"
             )
+
+    async def _stream_and_cache_chunk(
+        self, yun_path: str, fsid: int,
+    ) -> AsyncIterator[bytes]:
+        """流式下载分片文件并产出字节块，结束后自动写入了本地缓存."""
+        chunks: list[bytes] = []
+        async for chunk in self.yun_service.stream_download(
+            yun_path, fsid=fsid,
+        ):
+            chunks.append(chunk)
+            yield chunk
+
+        # 全部发送完成后再写入缓存（低优先级，不阻塞客户端）
+        if self.cache_segments:
+            full = b"".join(chunks)
+            await self.cache_service.set(yun_path, full)
+        else:
+            logger.info(f"分片缓存已禁用，跳过缓存: {yun_path}")
 
     def _convert_to_yun_path(self, request_path: str) -> str:
         """

@@ -1,11 +1,17 @@
 """百度网盘服务 - 负责与百度网盘API交互"""
 import httpx
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, AsyncIterator
 import logging
 import traceback
 
 
 logger = logging.getLogger(__name__)
+
+# API 元数据请求超时
+_API_TIMEOUT = 30.0
+# 文件下载流式超时 — 分片文件可能上百 MB, 留足时间
+_DOWNLOAD_STREAM_TIMEOUT = 300.0
+
 
 class BaiduYunService:
     """百度网盘服务类"""
@@ -13,8 +19,8 @@ class BaiduYunService:
     def __init__(self, access_token: Optional[str] = None):
         self.access_token = access_token
         self.client = httpx.AsyncClient(
-            timeout=30.0,
-            follow_redirects=True
+            timeout=_API_TIMEOUT,
+            follow_redirects=True,
         )
         self.batch_size = 1000  # 单次获取最大数量
 
@@ -120,6 +126,36 @@ class BaiduYunService:
             logger.error(f"下载文件失败 [{file_path}]: {e}")
             raise
 
+    async def stream_download(
+        self,
+        file_path: str,
+        fsid: Optional[int] = None,
+    ) -> AsyncIterator[bytes]:
+        """流式下载文件, 边下载边产出字节块.
+
+        用于 FastAPI StreamingResponse, 避免等待整个文件下载完毕才向
+        客户端发送第一个字节, 从而防止浏览器 / hls.js 超时断开连接。
+
+        Yields:
+            bytes chunks (默认 64 KB).
+        """
+        download_url = await self._get_download_url(file_path, fsid)
+
+        async with self.client.stream(
+            "GET",
+            download_url,
+            params={"access_token": self.access_token},
+            headers={"User-Agent": "pan.baidu.com"},
+            follow_redirects=True,
+            timeout=httpx.Timeout(
+                _DOWNLOAD_STREAM_TIMEOUT,
+                connect=_API_TIMEOUT,
+            ),
+        ) as resp:
+            resp.raise_for_status()
+            async for chunk in resp.aiter_bytes(chunk_size=65536):
+                yield chunk
+
     async def _get_download_url(self, file_path: str, fsid: Optional[int] = None) -> str:
         """
         获取文件下载链接
@@ -154,10 +190,8 @@ class BaiduYunService:
         response.raise_for_status()
 
         data = response.json()
-        print('request m3u8 response' , data)
         if data.get("errno") != 0:
             logger.error(f"获取下载链接失败: {data.get('errmsg', 'Unknown error')}")
-            print('metadata', data)
             raise Exception(f"获取下载链接失败: {data}")
 
         # 返回第一个文件的dlink

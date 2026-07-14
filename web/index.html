@@ -241,8 +241,8 @@
         <div class="help-section">
             <h3>使用说明</h3>
             <ul>
-                <li>• 网盘文件结构：/apps/movies/目录名/目录名.m3u8 + 分片文件</li>
-                <li>• 输入目录名（如 hdsn-006），自动加载 hdsn-006.m3u8</li>
+                <li>• 网盘文件结构：/apps/movies/目录名/playlist.m3u8 + 分片文件</li>
+                <li>• 输入目录名（如 hdsn-006），自动加载 playlist.m3u8</li>
                 <li>• 支持子目录：如 movies/我的视频</li>
                 <li>• m3u8文件必须与目录同名</li>
             </ul>
@@ -290,12 +290,12 @@
             const dirName = cleanPath.split('/').pop();
 
             // 构建m3u8 URL
-            const m3u8Url = `http://localhost:9009/hls/${cleanPath}/${dirName}.m3u8`;
+            const m3u8Url = `http://localhost:9009/hls/${cleanPath}/playlist.m3u8`;
 
             console.log('播放地址:', m3u8Url);
 
             playerSection.classList.add('active');
-            currentPathEl.textContent = `当前播放: /apps/movies/${cleanPath}/${dirName}.m3u8`;
+            currentPathEl.textContent = `当前播放: /apps/movies/${cleanPath}/playlist.m3u8`;
             showStatus('loading', '加载中...');
 
             if (hls) {
@@ -306,6 +306,10 @@
                 hls = new Hls({
                     enableWorker: true,
                     lowLatencyMode: true,
+                    manifestLoadingTimeOut: 30000,
+                    manifestLoadingMaxRetry: 3,
+                    fragLoadingTimeOut: 120000,
+                    fragLoadingMaxRetry: 6,
                 });
 
                 hls.loadSource(m3u8Url);

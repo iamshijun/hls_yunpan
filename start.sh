@@ -35,4 +35,8 @@ mkdir -p cache
 
 # 启动服务
 echo "启动服务..."
-python -m uvicorn app.main:app --host 0.0.0.0 --port 9009 --reload
+python -m uvicorn app.main:app \
+    --host 0.0.0.0 \
+    --port 9009 \
+    --reload \
+    --timeout-keep-alive 30

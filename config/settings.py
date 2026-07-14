@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     # 缓存配置
     cache_dir: str = "./cache"
     cache_ttl: int = 3600  # 缓存过期时间(秒)
+    cache_segments: bool = False  # 是否缓存HLS分片文件 (默认: 不缓存)
 
     # HLS配置
     m3u8_path_prefix: str = "/hls"  # HLS文件路径前缀

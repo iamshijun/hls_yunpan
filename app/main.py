@@ -48,7 +48,8 @@ async def lifespan(app):
     hls_proxy_service = HLSProxyService(
         yun_service=yun_service,
         cache_service=cache_service,
-        hls_root_path=settings.m3u8_path_prefix
+        hls_root_path=settings.m3u8_path_prefix,
+        cache_segments=settings.cache_segments
     )
 
     # 初始化路由服务
@@ -98,5 +99,6 @@ if __name__ == "__main__":
         host=settings.host,
         port=settings.port,
         reload=settings.debug,
-        log_level="info"
+        log_level="info",
+        timeout_keep_alive=30,
     )
