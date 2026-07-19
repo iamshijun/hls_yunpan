@@ -35,6 +35,10 @@ mkdir -p cache
 
 # 启动服务
 echo "启动服务..."
+echo "访问地址:"
+echo "- 本地访问: http://localhost:9009/"
+echo "- 网络访问: http://$(hostname -I | awk '{print $1}'):9009/"
+echo ""
 python -m uvicorn app.main:app \
     --host 0.0.0.0 \
     --port 9009 \

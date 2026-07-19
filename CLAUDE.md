@@ -82,7 +82,11 @@ Settings are managed in `config/settings.py` using pydantic-settings.
 ### Access Points
 - **Health Check**: `http://localhost:8000/health`
 - **HLS Proxy**: `http://localhost:8000/hls/{path:path}`
-- **Web Player**: `http://localhost:8000/web/`
+- **Web Player**: `http://localhost:8000/web` 
+
+**网络访问**:
+- 启动时会显示本地和网络访问地址
+- 其他机器可以通过服务器的IP地址直接访问web播放器
 
 ## File Structure
 
@@ -159,3 +163,9 @@ cp segment_* ./my_videos/video1/
 ```
 
 If the directory doesn't exist, the service will automatically use cloud mode and display a warning. This allows for development without hitting BaiduYun API limits and provides offline capability for testing.
+
+### Network Access
+The service supports multiple access methods:
+- **Direct file open**: Open index.html directly → uses localhost
+- **HTTP access**: Via IP address → uses server IP
+- **Both work seamlessly**: The player detects the access method automatically

@@ -82,14 +82,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 注册路由
-app.include_router(health.router)
-app.include_router(hls.router)
-
-# 挂载静态文件服务
+# 挂载静态文件服务 - 根路径提供web页面（必须在路由之前注册）
 static_dir = Path(__file__).parent.parent / "web"
 if static_dir.exists():
+    # 将web目录挂载到根路径 / （必须在路由之前注册）
+    #app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
+
+    # 同时提供 /web 路径的兼容性访问
     app.mount("/web", StaticFiles(directory=str(static_dir)), name="web")
+
+    logger.info(f"静态文件已挂载到根路径 / 和 /web")
+    logger.info(f"访问地址: http://{settings.host}:{settings.port}/")
+else:
+    logger.warning("Web目录不存在，静态文件服务已禁用")
+
+# 注册路由（必须在静态文件挂载之后注册）
+app.include_router(health.router)
+app.include_router(hls.router)
 
 
 if __name__ == "__main__":

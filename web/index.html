@@ -274,6 +274,19 @@
             errorMessage.classList.remove('show');
         }
 
+        // 检测访问方式并确定服务器地址
+        function getServerAddress() {
+            // 如果是通过 file:// 协议直接打开文件
+            if (window.location.protocol === 'file:') {
+                return 'localhost:9009';
+            }
+            // 如果是通过 HTTP/S 协议访问
+            else {
+                // 使用当前主机名和端口
+                return window.location.host;
+            }
+        }
+
         function loadVideo() {
             hideError();
 
@@ -289,8 +302,9 @@
             // 获取目录名（最后一个/后面的部分）
             const dirName = cleanPath.split('/').pop();
 
-            // 构建m3u8 URL
-            const m3u8Url = `http://localhost:9009/hls/${cleanPath}/playlist.m3u8`;
+            // 构建m3u8 URL - 使用相对路径检测的地址
+            const serverAddress = getServerAddress();
+            const m3u8Url = `http://${serverAddress}/hls/${cleanPath}/playlist.m3u8`;
 
             console.log('播放地址:', m3u8Url);
 
