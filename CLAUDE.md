@@ -74,6 +74,8 @@ Configuration is handled via `.env` file (see `.env.example` for template). Key 
 - `PORT`: Server port (default: 8000, but start.sh uses 9009)
 - `CACHE_DIR`: Cache directory (default: ./cache)
 - `CACHE_TTL`: Cache TTL in seconds (default: 3600)
+- `CACHE_SEGMENTS`: Whether to cache HLS segment files (default: False)
+- `LOCAL_PATH`: Local HLS file storage directory (default: ./local_hls) - if directory exists, local mode is automatically enabled
 
 Settings are managed in `config/settings.py` using pydantic-settings.
 
@@ -82,8 +84,9 @@ Settings are managed in `config/settings.py` using pydantic-settings.
 - **HLS Proxy**: `http://localhost:8000/hls/{path:path}`
 - **Web Player**: `http://localhost:8000/web/`
 
-## BaiduYun File Structure
+## File Structure
 
+### BaiduYun Cloud Storage
 HLS files in BaiduYun should be organized under `/Apps/hls/`:
 ```
 /Apps/hls/
@@ -95,9 +98,24 @@ HLS files in BaiduYun should be organized under `/Apps/hls/`:
 └── video2
 ```
 
-Access via proxy using paths like:
+### Local Mode
+When `LOCAL_MODE=True`, HLS files can be stored locally for development or offline use:
+```
+./local_hls/
+├── video1/
+|   |-- playlist.m3u8
+│   ├── segment_0001
+│   ├── segment_0002
+│   └── ...
+└── video2
+```
+
+### Access Patterns
+Both cloud and local files are accessed through the same proxy URLs:
 - `http://localhost:8000/hls/video1/playlist.m3u8`
 - `http://localhost:8000/hls/video1/segment_0001`
+
+**Priority**: Local files are automatically checked first when `LOCAL_PATH` directory exists.
 
 ## Important Implementation Details
 
@@ -113,9 +131,31 @@ Access via proxy using paths like:
 
 5. **CORS**: Currently enabled for all origins (should be restricted in production deployments)
 
+6. **Smart Local Mode**: Automatically detects and enables local mode when LOCAL_PATH directory exists:
+   - No manual configuration needed
+   - Check local files first before hitting the cloud API
+   - Perfect for development, testing, or offline scenarios
+   - Maintains the same API interface regardless of storage backend
+
 ## Development Notes
 
 - The project uses Uvicorn with auto-reload (`--reload`) for development
 - Logging is configured based on the `DEBUG` setting
 - The web player at `web/index.html` uses hls.js for modern browsers and falls back to native HLS support for Safari
 - BaiduYun API has rate limits; the caching layer helps mitigate this
+
+### Smart Local Mode Usage
+```bash
+# Simply set your local directory in .env
+LOCAL_PATH=./my_videos
+
+# Place your HLS files in the local directory
+mkdir -p ./my_videos/video1
+cp playlist.m3u8 ./my_videos/video1/
+cp segment_* ./my_videos/video1/
+
+# Start the service - local mode is automatically detected!
+./start.sh
+```
+
+If the directory doesn't exist, the service will automatically use cloud mode and display a warning. This allows for development without hitting BaiduYun API limits and provides offline capability for testing.

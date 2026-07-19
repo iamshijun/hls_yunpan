@@ -19,20 +19,69 @@ class HLSProxyService:
         yun_service: BaiduYunService,
         cache_service: CacheService,
         hls_root_path: str = "/hls",
-        cache_segments: bool = False
+        cache_segments: bool = False,
+        local_path: str = "./local_hls"
     ):
         self.yun_service = yun_service
         self.cache_service = cache_service
         self.hls_root_path = hls_root_path
         self.cache_segments = cache_segments
+        self.local_path = local_path
+        self.local_mode = os.path.exists(local_path) and os.path.isdir(local_path)
         self.parser = M3U8Parser()
         self.dir_locks = {}  # 目录加载锁: {dir_path: Lock}
+
+        # 记录本地模式状态
+        if self.local_mode:
+            logger.info(f"本地模式已启用，使用本地目录: {local_path}")
+        else:
+            logger.warning(f"本地目录不存在或不可访问，将使用网盘模式: {local_path}")
 
     def _get_dir_lock(self, dir_path: str) -> asyncio.Lock:
         """获取目录锁"""
         if dir_path not in self.dir_locks:
             self.dir_locks[dir_path] = asyncio.Lock()
         return self.dir_locks[dir_path]
+
+    def _get_local_file_path(self, request_path: str) -> str:
+        """
+        获取本地文件路径
+
+        Args:
+            request_path: HTTP请求路径
+
+        Returns:
+            本地文件绝对路径
+        """
+        # 移除URL前缀
+        if request_path.startswith(self.hls_root_path):
+            request_path = request_path[len(self.hls_root_path):]
+
+        # 构建本地文件路径
+        return os.path.join(self.local_path, request_path.lstrip('/'))
+
+    def _read_local_file(self, file_path: str) -> Optional[bytes]:
+        """
+        读取本地文件
+
+        Args:
+            file_path: 文件路径
+
+        Returns:
+            文件内容或None (如果文件不存在)
+        """
+        try:
+            with open(file_path, 'rb') as f:
+                return f.read()
+        except FileNotFoundError:
+            return None
+        except Exception as e:
+            logger.warning(f"读取本地文件失败 {file_path}: {e}")
+            return None
+
+    def _local_file_exists(self, file_path: str) -> bool:
+        """检查本地文件是否存在"""
+        return os.path.exists(file_path)
 
     async def _load_directory_fsids(self, dir_path: str) -> None:
         """
@@ -77,6 +126,28 @@ class HLSProxyService:
             FastAPI Response
         """
         try:
+            # 优先尝试本地模式
+            if self.local_mode:
+                local_file_path = self._get_local_file_path(request_path)
+                if self._local_file_exists(local_file_path):
+                    logger.info(f"使用本地m3u8文件: {request_path} -> {local_file_path}")
+                    content = self._read_local_file(local_file_path)
+                    if content:
+                        # 需要重写m3u8中的URL（相对路径保持不变）
+                        rewritten = await self._rewrite_m3u8_urls(content, request_path)
+                        return Response(
+                            content=rewritten,
+                            media_type="application/vnd.apple.mpegurl",
+                            headers={
+                                "Cache-Control": "public, max-age=3600",
+                                "Access-Control-Allow-Origin": "*"
+                            }
+                        )
+                else:
+                    return Response(
+                        status_code=404,
+                        content='m3u8 file not exist'
+                    )
             # 将请求路径转换为网盘路径
             yun_path = self._convert_to_yun_path(request_path)
             dir_path = os.path.dirname(yun_path) or "/"
@@ -147,6 +218,30 @@ class HLSProxyService:
             FastAPI Response
         """
         try:
+            # 优先尝试本地模式
+            if self.local_mode:
+                local_file_path = self._get_local_file_path(request_path)
+                if self._local_file_exists(local_file_path):
+                    logger.info(f"使用本地分片文件: {request_path} -> {local_file_path}")
+                    content = self._read_local_file(local_file_path)
+                    if content:
+                        if self.cache_segments:
+                            # 启用缓存时使用长缓存时间
+                            cache_header = "public, max-age=86400"
+                        else:
+                            # 禁用缓存时使用no-cache
+                            cache_header = "no-cache"
+                            logger.info(f"分片缓存已禁用，使用本地文件: {request_path}")
+
+                        return Response(
+                            content=content,
+                            media_type="video/mp2t",
+                            headers={
+                                "Cache-Control": cache_header,
+                                "Access-Control-Allow-Origin": "*"
+                            }
+                        )
+
             # 将请求路径转换为网盘路径
             yun_path = self._convert_to_yun_path(request_path)
             dir_path = os.path.dirname(yun_path) or "/"
@@ -156,15 +251,27 @@ class HLSProxyService:
             # 尝试从缓存获取
             content = await self.cache_service.get(yun_path)
             if content:
-                # 启用缓存时使用缓存的文件内容和长缓存时间
-                return Response(
-                    content=content,
-                    media_type="video/mp2t",
-                    headers={
-                        "Cache-Control": "public, max-age=86400",
-                        "Access-Control-Allow-Origin": "*"
-                    }
-                )
+                if self.cache_segments:
+                    # 启用缓存时使用缓存的文件内容和长缓存时间
+                    return Response(
+                        content=content,
+                        media_type="video/mp2t",
+                        headers={
+                            "Cache-Control": "public, max-age=86400",
+                            "Access-Control-Allow-Origin": "*"
+                        }
+                    )
+                else:
+                    # 禁用缓存时仍然从缓存读取以减少API调用，但返回no-cache头部
+                    logger.info(f"分片缓存已禁用，但使用缓存数据减少API调用: {yun_path}")
+                    return Response(
+                        content=content,
+                        media_type="video/mp2t",
+                        headers={
+                            "Cache-Control": "no-cache",
+                            "Access-Control-Allow-Origin": "*"
+                        }
+                    )
 
             # 从缓存获取fsid
             fsid = await self.cache_service.get_fsid(yun_path)

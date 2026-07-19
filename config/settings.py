@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     m3u8_path_prefix: str = "/hls"  # HLS文件路径前缀
     chunk_path_prefix: str = "/chunks"  # 分片文件路径前缀
 
+    # 本地模式配置
+    local_path: str = "./local_hls"  # 本地HLS文件存储目录，如果存在则自动启用本地模式
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
