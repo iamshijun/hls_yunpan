@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings
+from pydantic import Field, AliasChoices
 from typing import Optional
 
 class Settings(BaseSettings):
@@ -17,7 +18,23 @@ class Settings(BaseSettings):
     # 缓存配置
     cache_dir: str = "./cache"
     cache_ttl: int = 3600  # 缓存过期时间(秒)
+    cache_enabled: bool = True  # 是否启用磁盘缓存 (Vercel 等只读文件系统应设为 False)
     cache_segments: bool = False  # 是否缓存HLS分片文件 (默认: 不缓存)
+
+    # Redis / Upstash (Vercel KV) 配置 - 用于跨实例存储 fsid
+    # 兼容多种注入的环境变量名: 自定义 REDIS_URL / Vercel KV / Upstash Marketplace
+    redis_url: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "REDIS_URL", "KV_REST_API_URL", "UPSTASH_REDIS_REST_URL"
+        ),
+    )
+    redis_token: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "REDIS_TOKEN", "KV_REST_API_TOKEN", "UPSTASH_REDIS_REST_TOKEN"
+        ),
+    )
 
     # HLS配置
     m3u8_path_prefix: str = "/hls"  # HLS文件路径前缀

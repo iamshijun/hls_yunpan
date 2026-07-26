@@ -29,20 +29,27 @@ FastAPI Web服务
 ## 项目结构
 
 ```
-yunpan_hls/
+hls_yunpan/
+├── api/
+│   └── index.py               # Vercel serverless 入口 (from app.main import app)
 ├── app/
-│   ├── main.py                 # 应用入口
+│   ├── main.py                # create_app() 工厂 + 本地 uvicorn 启动
 │   ├── routes/
 │   │   ├── hls.py             # HLS代理路由
 │   │   └── health.py          # 健康检查
 │   ├── services/
 │   │   ├── baiduyun_service.py    # 百度网盘服务
-│   │   ├── cache_service.py       # 缓存服务
+│   │   ├── cache_service.py       # 文件内容缓存 + fsid 委托
+│   │   ├── fsid_store.py          # fsid 存储抽象 (内存/磁盘/Redis)
 │   │   └── hls_proxy_service.py   # HLS代理服务
 │   └── utils/
 │       └── m3u8_parser.py     # M3U8解析工具
 ├── config/
-│   └── settings.py            # 配置管理
+│   └── settings.py            # 配置管理 (唯一配置源)
+├── web/
+│   └── index.html             # Web 播放器
+├── vercel.json                # Vercel 部署配置
+├── package.json               # Vercel CLI 脚本
 ├── requirements.txt           # 依赖包
 ├── .env.example              # 环境变量模板
 └── start.sh                  # 启动脚本
@@ -63,10 +70,10 @@ pip install -r requirements.txt
 
 ### 2. 配置百度网盘
 
-编辑 `.env` 文件，添加百度网盘ACCESS_TOKEN：
+编辑 `.env` 文件，添加百度网盘 access_token：
 
 ```bash
-BAIDU_TOKEN=xxxx 
+ACCESS_TOKEN=xxxx
 ```
  
 ### 3. 启动服务
@@ -114,12 +121,55 @@ http://localhost:8000/hls/segment_0001.ts
 
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
-| `BAIDU_TOKEN` | 百度网盘access_token | - |
-| `DEBUG` | 调试模式 | `True` |
+| `ACCESS_TOKEN` | 百度网盘 access_token | - |
+| `DEBUG` | 调试模式（同时控制是否开放 `/docs`） | `True` |
 | `HOST` | 服务监听地址 | `0.0.0.0` |
 | `PORT` | 服务监听端口 | `8000` |
 | `CACHE_DIR` | 缓存目录 | `./cache` |
 | `CACHE_TTL` | 缓存过期时间(秒) | `3600` |
+| `CACHE_ENABLED` | 是否启用磁盘缓存（只读文件系统如 Vercel 设为 `false`） | `True` |
+| `CACHE_SEGMENTS` | 是否缓存 HLS 分片文件 | `False` |
+| `LOCAL_PATH` | 本地 HLS 文件目录（存在则自动启用本地模式） | `./local_hls` |
+| `REDIS_URL` / `REDIS_TOKEN` | Redis / Upstash (Vercel KV) 地址，用于跨实例存储 fsid | - |
+
+> `REDIS_URL` / `REDIS_TOKEN` 同时兼容 Vercel/Upstash 注入的变量名：
+> `KV_REST_API_URL`/`KV_REST_API_TOKEN` 与 `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`。
+> 一旦配置了 Redis，fsid 将存入 Redis（不受 `CACHE_ENABLED` 影响）。
+
+## Vercel 部署
+
+项目从**仓库根目录**部署到 Vercel，本地和 Vercel 运行的是同一个应用实例。
+
+- 入口：`api/index.py`（`from app.main import app`，由 `@vercel/python` 直接托管 ASGI 应用）
+- 配置：`vercel.json`（所有路径路由到 `/api/index`）
+- 脚本：根目录 `package.json`（`vercel dev` / `vercel --prod`）
+
+### 部署步骤
+
+```bash
+# 安装 Vercel CLI
+npm i -g vercel
+
+# 部署
+vercel --prod
+```
+
+### 必需的环境变量（在 Vercel 后台配置）
+
+```
+ACCESS_TOKEN=<百度 token>
+CACHE_ENABLED=false        # Vercel 文件系统只读（仅 /tmp 可写）
+DEBUG=false
+```
+
+### fsid 存储（推荐）
+
+Vercel 是无状态的，fsid 内存缓存在冷启动后会丢失。建议在
+**Vercel Marketplace → Storage** 添加 **Upstash Redis** 集成，它会自动注入
+`KV_REST_API_URL` / `KV_REST_API_TOKEN`，代码会自动识别并把 fsid 存入 Redis，
+从而跨实例、跨冷启动共享，进一步减少百度网盘 API 调用。
+
+fsid 存储后端按优先级自动选择：**Redis > 磁盘(`CACHE_ENABLED`) > 内存**。
 
 ## API端点
 

@@ -25,25 +25,33 @@ Media Player → FastAPI Web Service → HLS Proxy Service → BaiduYun Service
 
 **Key Components:**
 
-1. **FastAPI Application** (`app/main.py`): Entry point, lifecycle management, static file mounting, and service initialization
+1. **FastAPI Application** (`app/main.py`): Provides `create_app()` factory (used by both local and Vercel entry points), lifecycle management, static file mounting, and service initialization. The module-level `app = create_app()` instance is shared by local uvicorn and the Vercel serverless entry.
 
-2. **HLS Proxy Service** (`app/services/hls_proxy_service.py`): Core service that:
+2. **Vercel Entry** (`api/index.py`): Minimal serverless entry that just does `from app.main import app`. Vercel's `@vercel/python` runtime hosts this ASGI app directly, so local and Vercel run the exact same application.
+
+3. **HLS Proxy Service** (`app/services/hls_proxy_service.py`): Core service that:
    - Converts HTTP request paths to BaiduYun file paths
    - Handles m3u8 playlist and .ts chunk requests
    - Rewrites URLs in m3u8 files for correct chunk references
    - Manages directory-level fsid caching for performance
 
-3. **BaiduYun Service** (`app/services/baiduyun_service.py`): External API integration layer that:
+4. **BaiduYun Service** (`app/services/baiduyun_service.py`): External API integration layer that:
    - Handles all communication with BaiduYun REST API
    - Implements file listing, metadata retrieval, and download operations
    - Provides streaming download for large files
 
-4. **Cache Service** (`app/services/cache_service.py`): Performance optimization layer with:
-   - Local file caching to reduce API calls
+5. **Cache Service** (`app/services/cache_service.py`): Performance optimization layer with:
+   - Local file content caching to reduce API calls (controlled by `CACHE_ENABLED`)
    - TTL-based cache expiration
-   - fsid caching for efficient file lookups
+   - Delegates all fsid caching to an injected `FsidStore`
 
-5. **M3U8 Parser** (`app/utils/m3u8_parser.py`): Utility for parsing and generating HLS playlists
+6. **Fsid Store** (`app/services/fsid_store.py`): Pluggable fsid persistence abstraction (`FsidStore`) with three backends selected by `create_fsid_store()`:
+   - `MemoryFsidStore`: in-memory only (per-process / warm-instance lifetime)
+   - `DiskFsidStore`: local disk JSON per directory, with in-memory L1 (default for local)
+   - `RedisFsidStore`: Redis / Upstash (Vercel KV), shared across instances and cold starts
+   - Selection priority: **Redis > disk (`CACHE_ENABLED`) > memory**
+
+7. **M3U8 Parser** (`app/utils/m3u8_parser.py`): Utility for parsing and generating HLS playlists
 
 ## Running the Application
 
@@ -69,15 +77,38 @@ pip install -r requirements.txt
 ### Configuration
 Configuration is handled via `.env` file (see `.env.example` for template). Key settings:
 - `ACCESS_TOKEN`: BaiduYun access token (required)
-- `DEBUG`: Debug mode (default: True)
+- `DEBUG`: Debug mode (default: True). Also controls whether `/docs` & `/redoc` are exposed.
 - `HOST`: Server host (default: 0.0.0.0)
 - `PORT`: Server port (default: 8000, but start.sh uses 9009)
 - `CACHE_DIR`: Cache directory (default: ./cache)
 - `CACHE_TTL`: Cache TTL in seconds (default: 3600)
+- `CACHE_ENABLED`: Whether disk caching is enabled (default: True). Set to `False` on read-only filesystems (e.g. Vercel) to skip all disk writes.
 - `CACHE_SEGMENTS`: Whether to cache HLS segment files (default: False)
 - `LOCAL_PATH`: Local HLS file storage directory (default: ./local_hls) - if directory exists, local mode is automatically enabled
+- `REDIS_URL` / `REDIS_TOKEN`: Redis / Upstash (Vercel KV) REST endpoint for cross-instance fsid storage. Also accepts Vercel/Upstash injected names via aliases: `KV_REST_API_URL`/`KV_REST_API_TOKEN` and `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`. When set, fsid is stored in Redis regardless of `CACHE_ENABLED`.
 
 Settings are managed in `config/settings.py` using pydantic-settings.
+
+### Vercel Deployment
+The project deploys to Vercel from the **repository root** (not a subfolder), so `app/`, `config/`, and `web/` are all importable.
+
+- Entry point: `api/index.py` (`from app.main import app`)
+- Config: `vercel.json` (routes all paths to `/api/index`, sets memory/maxDuration)
+- CLI scripts: root `package.json` (`vercel dev`, `vercel --prod`)
+
+Required Vercel environment variables:
+```
+ACCESS_TOKEN=<baidu token>
+CACHE_ENABLED=false        # Vercel filesystem is read-only except /tmp
+DEBUG=false
+```
+Add an Upstash Redis integration (Vercel Marketplace → Storage) to persist fsid across
+instances and cold starts. It injects `KV_REST_API_URL`/`KV_REST_API_TOKEN` (or
+`UPSTASH_REDIS_REST_*`), which `config/settings.py` picks up automatically. Without Redis,
+fsid falls back to in-memory (warm-instance only, since `CACHE_ENABLED=false`).
+
+Note: `upstash-redis` is imported lazily inside `RedisFsidStore`, so local runs without
+Redis are unaffected.
 
 ### Access Points
 - **Health Check**: `http://localhost:8000/health`
@@ -88,7 +119,29 @@ Settings are managed in `config/settings.py` using pydantic-settings.
 - 启动时会显示本地和网络访问地址
 - 其他机器可以通过服务器的IP地址直接访问web播放器
 
-## File Structure
+## Project Structure
+
+```
+hls_yunpan/
+├── api/index.py            # Vercel serverless entry (from app.main import app)
+├── app/
+│   ├── main.py             # create_app() factory + local uvicorn boot
+│   ├── routes/
+│   │   ├── hls.py          # HLS proxy route handlers
+│   │   └── health.py       # Health check endpoint
+│   ├── services/
+│   │   ├── baiduyun_service.py   # BaiduYun REST API client
+│   │   ├── cache_service.py      # File content cache + fsid delegation
+│   │   ├── fsid_store.py         # FsidStore abstraction (Memory/Disk/Redis)
+│   │   └── hls_proxy_service.py  # Core HLS proxy logic
+│   └── utils/
+│       └── m3u8_parser.py  # HLS playlist parser
+├── config/settings.py      # Pydantic settings (single source)
+├── web/index.html          # Static web player
+├── vercel.json             # Vercel deployment config
+├── package.json            # Vercel CLI scripts
+└── requirements.txt
+```
 
 ### BaiduYun Cloud Storage
 HLS files in BaiduYun should be organized under `/Apps/hls/`:
@@ -103,7 +156,7 @@ HLS files in BaiduYun should be organized under `/Apps/hls/`:
 ```
 
 ### Local Mode
-When `LOCAL_MODE=True`, HLS files can be stored locally for development or offline use:
+When the `LOCAL_PATH` directory exists, local mode is automatically enabled and HLS files are served from disk for development or offline use:
 ```
 ./local_hls/
 ├── video1/
@@ -130,8 +183,8 @@ Both cloud and local files are accessed through the same proxy URLs:
 3. **Streaming**: Large files are streamed to prevent timeouts and reduce memory usage
 
 4. **Caching Strategy**: Two-level caching:
-   - Local file cache for downloaded content
-   - Directory-level fsid cache for faster file lookups
+   - Local file content cache for downloaded content (disk, gated by `CACHE_ENABLED`)
+   - Pluggable fsid cache via `FsidStore` (memory / disk / Redis), with directory-level batch loading for faster file lookups
 
 5. **CORS**: Currently enabled for all origins (should be restricted in production deployments)
 

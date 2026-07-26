@@ -11,6 +11,7 @@ from config.settings import settings
 from app.services.baiduyun_service import BaiduYunService
 from app.services.cache_service import CacheService
 from app.services.hls_proxy_service import HLSProxyService
+from app.services.fsid_store import create_fsid_store
 from app.routes import health, hls
 
 logger = logging.getLogger(__name__)
@@ -36,9 +37,18 @@ def create_app(
         """应用生命周期管理"""
         logger.info("正在初始化服务...")
         yun_svc = BaiduYunService(access_token=settings.access_token)
+        fsid_store = create_fsid_store(
+            ttl=settings.cache_ttl,
+            cache_enabled=settings.cache_enabled,
+            cache_dir=cache_dir or settings.cache_dir,
+            redis_url=settings.redis_url,
+            redis_token=settings.redis_token,
+        )
         cache_svc = CacheService(
             cache_dir=cache_dir or settings.cache_dir,
-            ttl=settings.cache_ttl
+            ttl=settings.cache_ttl,
+            enabled=settings.cache_enabled,
+            fsid_store=fsid_store,
         )
         hls_svc = HLSProxyService(
             yun_service=yun_svc,
@@ -51,6 +61,7 @@ def create_app(
         logger.info("服务初始化完成")
         yield
         await yun_svc.close()
+        await cache_svc.close()
         logger.info("服务已关闭")
 
     app = FastAPI(

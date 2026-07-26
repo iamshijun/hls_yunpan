@@ -7,3 +7,4 @@ aiofiles==23.2.1
 pydantic>=2.9.0
 pydantic-settings==2.14.1
 tqdm>=4.66.0
+upstash-redis>=1.1.0
