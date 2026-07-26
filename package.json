@@ -1,0 +1,25 @@
+{
+  "name": "yunpan-hls-proxy",
+  "version": "1.0.0",
+  "description": "HLS proxy server for BaiduYun on Vercel",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel --prod",
+    "build": "echo 'No build required for Python serverless functions'"
+  },
+  "engines": {
+    "node": "24.0"
+  },
+  "devDependencies": {
+    "vercel": "^30.0.0"
+  },
+  "keywords": [
+    "hls",
+    "proxy",
+    "baiduyun",
+    "vercel",
+    "serverless"
+  ],
+  "author": "",
+  "license": "MIT"
+}

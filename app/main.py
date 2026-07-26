@@ -2,6 +2,7 @@
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Optional
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -12,97 +13,93 @@ from app.services.cache_service import CacheService
 from app.services.hls_proxy_service import HLSProxyService
 from app.routes import health, hls
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO if not settings.debug else logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
-# 全局服务实例
-yun_service: BaiduYunService = None
-cache_service: CacheService = None
-hls_proxy_service: HLSProxyService = None
 
+def create_app(
+    cache_dir: Optional[str] = None,
+    docs_enabled: Optional[bool] = None,
+    static_dir: Optional[Path] = None,
+) -> FastAPI:
+    """创建并配置FastAPI应用实例
 
-@asynccontextmanager
-async def lifespan(app):
-    """应用生命周期管理"""
-    # 启动时初始化
-    global yun_service, cache_service, hls_proxy_service
+    Args:
+        cache_dir: 缓存目录，默认使用 settings.cache_dir
+        docs_enabled: 是否启用 API 文档，默认等于 settings.debug
+        static_dir: 静态文件目录，默认使用项目根目录的 web/ 文件夹
+    """
+    if docs_enabled is None:
+        docs_enabled = settings.debug
 
-    logger.info("正在初始化服务...")
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        """应用生命周期管理"""
+        logger.info("正在初始化服务...")
+        yun_svc = BaiduYunService(access_token=settings.access_token)
+        cache_svc = CacheService(
+            cache_dir=cache_dir or settings.cache_dir,
+            ttl=settings.cache_ttl
+        )
+        hls_svc = HLSProxyService(
+            yun_service=yun_svc,
+            cache_service=cache_svc,
+            hls_root_path=settings.m3u8_path_prefix,
+            cache_segments=settings.cache_segments,
+            local_path=settings.local_path
+        )
+        hls.init_service(hls_svc)
+        logger.info("服务初始化完成")
+        yield
+        await yun_svc.close()
+        logger.info("服务已关闭")
 
-    # 初始化百度网盘服务
-    yun_service = BaiduYunService(
-        access_token=settings.access_token
+    app = FastAPI(
+        title=settings.app_name,
+        version=settings.app_version,
+        lifespan=lifespan,
+        docs_url="/docs" if docs_enabled else None,
+        redoc_url="/redoc" if docs_enabled else None,
     )
 
-    # 初始化缓存服务
-    cache_service = CacheService(
-        cache_dir=settings.cache_dir,
-        ttl=settings.cache_ttl
+    # CORS
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
-    # 初始化HLS代理服务
-    hls_proxy_service = HLSProxyService(
-        yun_service=yun_service,
-        cache_service=cache_service,
-        hls_root_path=settings.m3u8_path_prefix,
-        cache_segments=settings.cache_segments,
-        local_path=settings.local_path
-    )
+    # 静态文件
+    effective_static_dir = static_dir or (Path(__file__).parent.parent / "web")
+    if effective_static_dir.exists():
+        app.mount(
+            "/web",
+            StaticFiles(directory=str(effective_static_dir)),
+            name="web",
+        )
+        logger.info(f"静态文件已挂载到 /web: {effective_static_dir}")
+    else:
+        logger.warning("Web目录不存在，静态文件服务已禁用")
 
-    # 初始化路由服务
-    hls.init_service(hls_proxy_service)
+    # 路由
+    app.include_router(health.router)
+    app.include_router(hls.router)
 
-    logger.info("服务初始化完成")
-
-    yield
-
-    # 关闭时清理
-    logger.info("正在关闭服务...")
-    await yun_service.close()
-    logger.info("服务已关闭")
+    return app
 
 
-# 创建FastAPI应用
-app = FastAPI(
-    title=settings.app_name,
-    version=settings.app_version,
-    lifespan=lifespan
-)
-
-# 配置CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # 生产环境应该限制具体域名
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# 挂载静态文件服务 - 根路径提供web页面（必须在路由之前注册）
-static_dir = Path(__file__).parent.parent / "web"
-if static_dir.exists():
-    # 将web目录挂载到根路径 / （必须在路由之前注册）
-    #app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
-
-    # 同时提供 /web 路径的兼容性访问
-    app.mount("/web", StaticFiles(directory=str(static_dir)), name="web")
-
-    logger.info(f"静态文件已挂载到根路径 / 和 /web")
-    logger.info(f"访问地址: http://{settings.host}:{settings.port}/")
-else:
-    logger.warning("Web目录不存在，静态文件服务已禁用")
-
-# 注册路由（必须在静态文件挂载之后注册）
-app.include_router(health.router)
-app.include_router(hls.router)
+# 标准应用实例（本地运行 / Vercel 共享同一实例）
+app = create_app()
 
 
 if __name__ == "__main__":
     import uvicorn
+
+    logging.basicConfig(
+        level=logging.INFO if not settings.debug else logging.DEBUG,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
 
     uvicorn.run(
         "app.main:app",
