@@ -118,8 +118,8 @@ class BaiduYunService:
                 headers= {
                     "User-Agent" : "pan.baidu.com"
                 })
-            logger.info(f"下载响应 [{file_path}] status={response.status_code} final_url={response.url}")
-            logger.info(f"重定向链 [{file_path}]: {[(h.status_code, str(h.url)) for h in response.history]}")
+            # logger.info(f"下载响应 [{file_path}] status={response.status_code} final_url={response.url}")
+            # logger.info(f"重定向链 [{file_path}]: {[(h.status_code, str(h.url)) for h in response.history]}")
             response.raise_for_status()
 
             return response.content
@@ -154,8 +154,8 @@ class BaiduYunService:
                 connect=_API_TIMEOUT,
             ),
         ) as resp:
-            logger.info(f"流式下载响应 [{file_path}] status={resp.status_code} final_url={resp.url}")
-            logger.info(f"重定向链 [{file_path}]: {[(h.status_code, str(h.url)) for h in resp.history]}")
+            # logger.info(f"流式下载响应 [{file_path}] status={resp.status_code} final_url={resp.url}")
+            # logger.info(f"重定向链 [{file_path}]: {[(h.status_code, str(h.url)) for h in resp.history]}")
             resp.raise_for_status()
             async for chunk in resp.aiter_bytes(chunk_size=65536):
                 yield chunk

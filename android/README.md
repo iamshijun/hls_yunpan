@@ -3,8 +3,9 @@
 将网盘 HLS 代理服务改造为 Android 原生 App：本地 Ktor 代理 + Media3 ExoPlayer 播放。
 
 - 包名：`xyz.asitanokibou.player`
-- minSdk：30（Android 11），targetSdk / compileSdk：35
-- UI：Jetpack Compose
+- minSdk：30（Android 11），targetSdk / compileSdk：34
+- 工具链：AGP 8.1.4 / Gradle 8.2 / Kotlin 1.9.22（适配 Android Studio Giraffe 2022.3.1）
+- UI：Jetpack Compose（Compose 编译器扩展 1.5.10）
 - 播放：Media3 ExoPlayer（HLS），统一由 `PlaybackService`（MediaSessionService）托管
 - 本地代理与百度下载：Ktor Server / Client（CIO）
 - fsid 缓存：仅内存（MVP）
@@ -17,7 +18,7 @@
 
 1. Android Studio 选择 **Open**，打开本 `android/` 目录（不是仓库根）。
 2. 首次会自动生成 `local.properties`（含本机 SDK 路径）和 Gradle Wrapper。
-   - 若命令行构建，需先执行 `gradle wrapper --gradle-version 8.9` 生成 wrapper（本骨架未附带 `gradlew` 二进制）。
+   - 若命令行构建，需先执行 `gradle wrapper --gradle-version 8.2` 生成 wrapper（本骨架未附带 `gradlew` 二进制）。
 3. Sync 后运行 `app`，应能启动一个显示占位文案的空壳界面。
 
 > 注意：本仓库这边无 Android SDK/Gradle 环境，代码由对话编写，编译与真机调试请在 Android Studio 进行，报错再一起修。

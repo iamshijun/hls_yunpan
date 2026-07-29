@@ -1,18 +1,17 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
-    alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
 }
 
 android {
     namespace = "xyz.asitanokibou.player"
-    compileSdk = 35
+    compileSdk = 34
 
     defaultConfig {
         applicationId = "xyz.asitanokibou.player"
         minSdk = 30
-        targetSdk = 35
+        targetSdk = 34
         versionCode = 1
         versionName = "0.1.0"
     }
@@ -38,6 +37,11 @@ android {
 
     buildFeatures {
         compose = true
+    }
+
+    composeOptions {
+        // Kotlin 1.9.x 走旧的 Compose 编译器扩展方式
+        kotlinCompilerExtensionVersion = libs.versions.composeCompiler.get()
     }
 }
 

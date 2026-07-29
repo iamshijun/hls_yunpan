@@ -210,6 +210,16 @@ GET /hls/video/segment_0001.ts
 2. **access_token有效期**: access_token可能过期，需要定期更新
 3. **带宽限制**: 免费账号可能有下载速度限制
 4. **缓存空间**: 注意监控本地缓存大小
+5. termux :
+   ```shell
+    pkg update
+    pkg upgrade
+    #因为需要rust来编译某些包
+    pkg install clang rust make pkg-config
+    pip install -U pip setuptools wheel 
+    #指定当前的android版本
+    export ANDROID_API_LEVEL=$(getprop ro.build.version.sdk)
+  ```
 
 ## 待优化功能
 
