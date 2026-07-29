@@ -35,7 +35,7 @@ class HLSProxyService:
         if self.local_mode:
             logger.info(f"本地模式已启用，使用本地目录: {local_path}")
         else:
-            logger.warning(f"本地目录{local_path}不存在或不可访问，将使用网盘模式")
+            logger.info(f"本地目录{local_path}不存在或不可访问，将使用网盘模式")
 
     def _get_dir_lock(self, dir_path: str) -> asyncio.Lock:
         """获取目录锁"""
@@ -332,7 +332,7 @@ class HLSProxyService:
             full = b"".join(chunks)
             await self.cache_service.set(yun_path, full)
         else:
-            logger.info(f"分片缓存已禁用，跳过缓存: {yun_path}")
+            logger.debug(f"分片缓存已禁用，跳过缓存: {yun_path}")
 
     def _convert_to_yun_path(self, request_path: str) -> str:
         """

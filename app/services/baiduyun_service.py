@@ -109,7 +109,7 @@ class BaiduYunService:
         try:
             # 首先获取文件的下载链接
             download_url = await self._get_download_url(file_path, fsid)
-
+            logger.info(f'download_url of {file_path} : {download_url} ')
             # 下载文件
             response = await self.client.get(download_url, follow_redirects=True,
                 params= {

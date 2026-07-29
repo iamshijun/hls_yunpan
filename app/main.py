@@ -32,6 +32,12 @@ def create_app(
     if docs_enabled is None:
         docs_enabled = settings.debug
 
+    # 配置日志（模块导入时即生效，兼容 uvicorn 命令行 / Vercel 启动方式）
+    logging.basicConfig(
+        level=logging.INFO if not settings.debug else logging.DEBUG,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         """应用生命周期管理"""
@@ -106,11 +112,6 @@ app = create_app()
 
 if __name__ == "__main__":
     import uvicorn
-
-    logging.basicConfig(
-        level=logging.INFO if not settings.debug else logging.DEBUG,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
 
     uvicorn.run(
         "app.main:app",
