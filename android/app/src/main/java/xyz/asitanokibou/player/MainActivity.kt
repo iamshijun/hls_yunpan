@@ -2,6 +2,7 @@ package xyz.asitanokibou.player
 
 import android.Manifest
 import android.content.ComponentName
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -13,6 +14,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
@@ -36,7 +40,11 @@ class MainActivity : ComponentActivity() {
         maybeRequestNotificationPermission()
         val settings = AppSettings(applicationContext)
         setContent {
-            AppRoot(controller = controller, settings = settings)
+            AppRoot(
+                controller = controller,
+                settings = settings,
+                onFullscreenChanged = { fullscreen -> applyFullscreen(fullscreen) },
+            )
         }
     }
 
@@ -51,6 +59,27 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * 切换沉浸式全屏 + 横竖屏方向。
+     * - 开启：隐藏状态栏与导航栏、强制横屏
+     * - 关闭：恢复系统栏、解除方向锁定
+     *
+     * 必须与 AndroidManifest 中 `configChanges` 配合，避免横屏旋转时 Activity 被销毁。
+     */
+    private fun applyFullscreen(fullscreen: Boolean) {
+        WindowCompat.setDecorFitsSystemWindows(window, !fullscreen)
+        val insetsController = WindowInsetsControllerCompat(window, window.decorView)
+        insetsController.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        if (fullscreen) {
+            insetsController.hide(WindowInsetsCompat.Type.systemBars())
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        } else {
+            insetsController.show(WindowInsetsCompat.Type.systemBars())
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
+
     override fun onStart() {
         super.onStart()
         val token = SessionToken(this, ComponentName(this, PlaybackService::class.java))
@@ -61,6 +90,7 @@ class MainActivity : ComponentActivity() {
                 controller = try {
                     future.get()
                 } catch (e: Exception) {
+                    android.util.Log.e("MainActivity", "连接播放服务失败", e)
                     null
                 }
             },

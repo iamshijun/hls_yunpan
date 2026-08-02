@@ -35,6 +35,8 @@ class ProxyServer(
 
         val chosen = if (preferredPort > 0) preferredPort else findFreePort()
         val srv = embeddedServer(CIO, host = HOST, port = chosen) {
+            // 给大目录 fsid 加载 + m3u8 下载留足时间（默认 15s 太短）
+
             configureRouting()
         }
         srv.start(wait = false)
@@ -73,5 +75,7 @@ class ProxyServer(
         private const val HOST = "127.0.0.1"
         private const val GRACE_MILLIS = 500L
         private const val TIMEOUT_MILLIS = 1500L
+        /** 单请求整体超时：兜住大目录 fsid 拉取 + m3u8 下载（分片用 respondBytesWriter 不受此限） */
+        private const val SERVER_REQUEST_TIMEOUT_MS = 90_000L
     }
 }

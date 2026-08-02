@@ -1,6 +1,10 @@
 package xyz.asitanokibou.player.ui
 
+import androidx.activity.compose.BackHandler
+import androidx.annotation.OptIn
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,6 +21,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -25,17 +30,24 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.launch
 import xyz.asitanokibou.player.config.AppConfig
 import xyz.asitanokibou.player.config.AppSettings
 
 @Composable
-fun AppRoot(controller: Player?, settings: AppSettings) {
+fun AppRoot(
+    controller: Player?,
+    settings: AppSettings,
+    onFullscreenChanged: (Boolean) -> Unit = {},
+) {
     var showSettings by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val config by settings.configFlow.collectAsState(initial = AppConfig())
@@ -60,20 +72,34 @@ fun AppRoot(controller: Player?, settings: AppSettings) {
                 controller = controller,
                 hasToken = !config.accessToken.isNullOrBlank(),
                 onOpenSettings = { showSettings = true },
+                onFullscreenChanged = onFullscreenChanged,
             )
         }
     }
 }
 
+@OptIn(UnstableApi::class)
 @Composable
 private fun HomeScreen(
     controller: Player?,
     hasToken: Boolean,
     onOpenSettings: () -> Unit,
+    onFullscreenChanged: (Boolean) -> Unit,
 ) {
     var path by remember { mutableStateOf("") }
     val status = remember { mutableStateOf<String?>(null) }
     val error = remember { mutableStateOf<String?>(null) }
+    var isFullscreen by remember { mutableStateOf(false) }
+
+    // 把全屏状态同步给 Activity（用于隐藏系统栏 + 切换横屏）
+    LaunchedEffect(isFullscreen) {
+        onFullscreenChanged(isFullscreen)
+    }
+
+    // 全屏下用系统返回键退出
+    BackHandler(enabled = isFullscreen) {
+        isFullscreen = false
+    }
 
     DisposableEffect(controller) {
         val listener = object : Player.Listener {
@@ -94,69 +120,116 @@ private fun HomeScreen(
         onDispose { controller?.removeListener(listener) }
     }
 
-    Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-        Column(
+    if (isFullscreen) {
+        // 全屏态：仅显示 PlayerView，铺满屏幕（黑底避免画面变化时的白边）
+        Box(
             modifier = Modifier
-                .padding(innerPadding)
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .fillMaxSize()
+                .background(Color.Black),
+            contentAlignment = Alignment.Center,
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("hls_pan_player", style = MaterialTheme.typography.titleLarge)
-                TextButton(onClick = onOpenSettings) { Text("设置") }
-            }
-
-            OutlinedTextField(
-                value = path,
-                onValueChange = { path = it },
-                label = { Text("媒体目录路径，例如 video1 或 movies/我的视频") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            Button(
-                onClick = {
-                    error.value = null
-                    controller?.let { playPath(it, path) }
-                },
-                enabled = controller != null && path.isNotBlank(),
-            ) {
-                Text("播放")
-            }
-
-            if (!hasToken) {
-                Text(
-                    "请先在「设置」中填写百度网盘 access_token",
-                    color = MaterialTheme.colorScheme.error,
-                )
-            }
-            if (controller == null) {
-                Text("正在连接播放服务...", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            status.value?.let {
-                Text("状态：$it", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            error.value?.let {
-                Text("播放错误：$it", color = MaterialTheme.colorScheme.error)
-            }
-
-            Spacer(Modifier.padding(4.dp))
-
-            AndroidView(
-                factory = { ctx ->
-                    PlayerView(ctx).apply { useController = true }
-                },
-                update = { view -> view.player = controller },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(16f / 9f),
+            HlsPlayerView(
+                controller = controller,
+                onToggleFullscreen = { isFullscreen = !isFullscreen },
+                modifier = Modifier.fillMaxSize(),
+                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT,
             )
         }
+    } else {
+        Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+            Column(
+                modifier = Modifier
+                    .padding(innerPadding)
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("hls_pan_player", style = MaterialTheme.typography.titleLarge)
+                    TextButton(onClick = onOpenSettings) { Text("设置") }
+                }
+
+                OutlinedTextField(
+                    value = path,
+                    onValueChange = { path = it },
+                    label = { Text("媒体目录路径，例如 video1 或 movies/我的视频") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                Button(
+                    onClick = {
+                        error.value = null
+                        controller?.let { playPath(it, path) }
+                    },
+                    enabled = controller != null && path.isNotBlank(),
+                ) {
+                    Text("播放")
+                }
+
+                if (!hasToken) {
+                    Text(
+                        "请先在「设置」中填写百度网盘 access_token",
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                if (controller == null) {
+                    Text("正在连接播放服务...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                status.value?.let {
+                    Text("状态：$it", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                error.value?.let {
+                    Text("播放错误：$it", color = MaterialTheme.colorScheme.error)
+                }
+
+                Spacer(Modifier.padding(4.dp))
+
+                HlsPlayerView(
+                    controller = controller,
+                    onToggleFullscreen = { isFullscreen = !isFullscreen },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(16f / 9f),
+                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT,
+                )
+            }
+        }
     }
+}
+
+/**
+ * 包装 Media3 PlayerView，开启全屏按钮并把点击事件抛回 Compose 侧。
+ * 切到全屏时由调用方切换外层布局与系统栏/方向。
+ *
+ * 注：Media3 1.3.x 没有 setShowFullscreenButton API；只要设置了
+ * FullscreenButtonClickListener，控制器就会自动展示全屏按钮。
+ */
+@OptIn(UnstableApi::class)
+@Composable
+private fun HlsPlayerView(
+    controller: Player?,
+    onToggleFullscreen: () -> Unit,
+    modifier: Modifier = Modifier,
+    resizeMode: Int = AspectRatioFrameLayout.RESIZE_MODE_FIT,
+) {
+    AndroidView(
+        factory = { ctx ->
+            PlayerView(ctx).apply {
+                useController = true
+                this.resizeMode = resizeMode
+                setFullscreenButtonClickListener { onToggleFullscreen() }
+            }
+        },
+        update = { view ->
+            view.player = controller
+            view.resizeMode = resizeMode
+        },
+        modifier = modifier,
+    )
 }
 
 @Composable

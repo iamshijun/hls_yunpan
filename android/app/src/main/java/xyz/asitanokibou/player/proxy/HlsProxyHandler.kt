@@ -21,8 +21,9 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * HLS 代理核心处理器（对齐 Python `hls_proxy_service.py`）。
  *
- * 直接基于 Ktor [ApplicationCall] 应答，支持 m3u8 改写与分片流式转发。
- * 说明：Android 版 MVP 不含 local_mode（本地文件夹播放留待后续）。
+ * 注意：百度 filemetas 不支持 path 查询，只能按 fsid；所以 fsid 必须先
+ * 通过 `xpan/file?method=list` 拉取整目录获得。目录可能上千文件，需
+ * 在 Ktor server 与 ExoPlayer 端配置足够大的超时。
  */
 class HlsProxyHandler(
     private val baidu: BaiduYunClient,
@@ -58,7 +59,6 @@ class HlsProxyHandler(
 
             var content = fileCache.get(yunPath)
             if (content == null) {
-                // 首次访问：加载目录下所有文件的 fsid
                 loadDirectoryFsids(dirPath)
                 val fsid = fsidStore.get(yunPath)
                 if (fsid == null) {
@@ -85,7 +85,6 @@ class HlsProxyHandler(
         val dirPath = dirName(yunPath)
         Log.i(TAG, "处理分片请求: $requestPath -> $yunPath")
 
-        // 命中缓存直接返回（即使 cacheSegments 关闭，命中也用缓存以减少 API 调用）
         val fsid: Long
         try {
             val cached = fileCache.get(yunPath)
@@ -113,7 +112,6 @@ class HlsProxyHandler(
             return
         }
 
-        // 流式转发（头部一旦提交无法再改状态码；流中异常仅记录）
         appendChunkHeaders(call)
         call.respondBytesWriter(contentType = TS_CONTENT_TYPE) {
             try {
@@ -129,7 +127,6 @@ class HlsProxyHandler(
                         }
                     }
                 }
-                // 全部发送完成后再写缓存（仅在启用分片缓存时）
                 buffered?.let { fileCache.set(yunPath, it.toByteArray()) }
             } catch (e: Exception) {
                 Log.e(TAG, "分片流式转发失败 [$yunPath]: $e")

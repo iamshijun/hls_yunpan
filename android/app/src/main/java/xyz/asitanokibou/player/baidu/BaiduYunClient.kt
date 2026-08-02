@@ -3,7 +3,7 @@ package xyz.asitanokibou.player.baidu
 import android.util.Log
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
-import io.ktor.client.engine.cio.CIO
+import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -38,7 +38,9 @@ class BaiduYunClient(
         isLenient = true
     }
 
-    private val http = HttpClient(CIO) {
+    private val http: HttpClient = HttpClient(OkHttp) {
+        // OkHttp 引擎：完整实现 hostname-aware checkServerTrusted，
+        // 避免 Android 7+ 在严格 networkSecurityConfig 下抛 CertificateException
         followRedirects = true
         expectSuccess = true // 类似 httpx 的 raise_for_status（HTTP 层）
         install(HttpTimeout) {
@@ -65,7 +67,7 @@ class BaiduYunClient(
     }
 
     /** 获取目录下的文件列表（单批） */
-    suspend fun getFileList(path: String = "/", start: Int = 0, limit: Int = BATCH_SIZE): List<BaiduFile> {
+    private suspend fun getFileList(path: String = "/", start: Int = 0, limit: Int = BATCH_SIZE): List<BaiduFile> {
         val token = requireToken()
         val text = http.get(LIST_URL) {
             parameter("method", "list")
@@ -86,7 +88,7 @@ class BaiduYunClient(
     }
 
     /** 通过 fsid 获取下载直链 */
-    suspend fun getDownloadUrl(fsid: Long): String {
+    private suspend fun getDownloadUrl(fsid: Long): String {
         val token = requireToken()
         val text = http.get(META_URL) {
             parameter("method", "filemetas")

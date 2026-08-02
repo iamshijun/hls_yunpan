@@ -1,10 +1,14 @@
 package xyz.asitanokibou.player.service
 
 import android.util.Log
+import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.google.common.util.concurrent.Futures
@@ -48,6 +52,7 @@ class PlaybackService : MediaSessionService() {
     @Volatile private var currentToken: String? = null
     @Volatile private var port: Int = -1
 
+    @OptIn(UnstableApi::class)
     override fun onCreate() {
         super.onCreate()
 
@@ -86,6 +91,15 @@ class PlaybackService : MediaSessionService() {
         player = ExoPlayer.Builder(this)
             .setHandleAudioBecomingNoisy(true) // 拔耳机自动暂停
             .setWakeMode(C.WAKE_MODE_NETWORK)  // 播放时保持 CPU+网络唤醒
+            .setMediaSourceFactory(
+                DefaultMediaSourceFactory(this)
+                    .setDataSourceFactory(
+                        DefaultHttpDataSource.Factory()
+                            .setConnectTimeoutMs(EXOPLAYER_CONNECT_TIMEOUT_MS)
+                            .setReadTimeoutMs(EXOPLAYER_READ_TIMEOUT_MS)
+                            .setAllowCrossProtocolRedirects(true),
+                    ),
+            )
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
@@ -148,5 +162,9 @@ class PlaybackService : MediaSessionService() {
         @Volatile
         var runningPort: Int = -1
             private set
+
+        /** ExoPlayer 拉 m3u8 时的 HTTP 超时：本地代理拉整目录 fsid 可能要几十秒 */
+        private const val EXOPLAYER_CONNECT_TIMEOUT_MS = 15_000
+        private const val EXOPLAYER_READ_TIMEOUT_MS = 90_000
     }
 }
