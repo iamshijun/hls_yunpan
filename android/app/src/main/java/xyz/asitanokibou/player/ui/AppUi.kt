@@ -391,16 +391,18 @@ private fun LevelOverlay(label: String, level: Float, modifier: Modifier = Modif
     ) {
         Text(label, color = Color.White, style = MaterialTheme.typography.titleSmall)
         Spacer(Modifier.height(8.dp))
+        // 垂直刻度条：从底部向上填充，贴合竖滑方向
         Box(
             modifier = Modifier
-                .width(100.dp)
-                .height(6.dp)
+                .width(6.dp)
+                .height(80.dp)
                 .background(Color.White.copy(alpha = 0.3f), RoundedCornerShape(3.dp)),
+            contentAlignment = Alignment.BottomCenter,
         ) {
             Box(
                 modifier = Modifier
-                    .fillMaxWidth(level.coerceIn(0f, 1f))
-                    .fillMaxHeight()
+                    .fillMaxWidth()
+                    .fillMaxHeight(level.coerceIn(0f, 1f))
                     .background(Color.White, RoundedCornerShape(3.dp)),
             )
         }

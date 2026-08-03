@@ -6,6 +6,7 @@ import android.view.GestureDetector
 import android.view.MotionEvent
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.ui.PlayerControlView
 import androidx.media3.ui.PlayerView
 import kotlin.math.abs
 import kotlin.math.min
@@ -16,6 +17,9 @@ import kotlin.math.min
  * - 左半屏竖滑 → 亮度；右半屏竖滑 → 音量
  * - 双击左/右半屏 → 快退/快进 10s
  * - 单击视频区 → 切换控制栏（沿用 PlayerView 自带的 performClick 逻辑）
+ *
+ * 默认控制栏上的上一个/下一个/快退/快进按钮已隐藏（见 [hideUnusedControllerButtons]），
+ * seek/前进后退完全由手势控制，仅保留播放/暂停、时间、全屏等。
  *
  * 手势识别放在 [onTouchEvent]：视频区域的触摸不会被 PlayerView 的子 View
  * （SurfaceView / 控制栏背景）消费，会回落到 onTouchEvent，因此无需拦截，
@@ -49,6 +53,11 @@ class GesturePlayerView @JvmOverloads constructor(
     private var seeking = false
     private var verticalDragging = false
     private var dragIsLeftHalf = false
+
+    init {
+        // seek/前进后退完全交给手势，隐藏默认控制栏上的这些按钮
+        hideUnusedControllerButtons()
+    }
 
     private val gestureDetector = GestureDetector(
         context,
@@ -117,6 +126,16 @@ class GesturePlayerView @JvmOverloads constructor(
     private fun resetGestureState() {
         seeking = false
         verticalDragging = false
+    }
+
+    /** 隐藏默认控制栏上的上一个/下一个/快退/快进按钮，只保留播放暂停等 */
+    private fun hideUnusedControllerButtons() {
+        val controlView =
+            findViewById<PlayerControlView>(androidx.media3.ui.R.id.exo_controller) ?: return
+        controlView.setShowPreviousButton(false)
+        controlView.setShowNextButton(false)
+        controlView.setShowRewindButton(false)
+        controlView.setShowFastForwardButton(false)
     }
 
     /** 满屏水平滑动对应的秒数：随视频时长缩放，上限 [MAX_SEEK_RANGE_SEC] */
