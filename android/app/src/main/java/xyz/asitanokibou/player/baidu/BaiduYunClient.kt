@@ -50,12 +50,23 @@ class BaiduYunClient(
         }
     }
 
-    /** 获取目录下所有文件（分批，batch=1000） */
-    suspend fun getFileListAll(path: String = "/"): List<BaiduFile> {
+    /**
+     * 获取目录下所有文件
+     * @param path 目录路径
+     * @param order 排序字段：`name` / `time` / `size`，与百度 list API 一致
+     * @param desc 1 = 降序，0 = 升序
+     * @param batchSize 批量
+     */
+    suspend fun getFileListAll(
+        path: String = "/",
+        order: String = "name",
+        desc: Int = 1,
+        batchSize : Int = BATCH_SIZE
+    ): List<BaiduFile> {
         val all = mutableListOf<BaiduFile>()
         var start = 0
         while (true) {
-            val files = getFileList(path, start, BATCH_SIZE)
+            val files = getFileList(path, start, batchSize, order, desc)
             if (files.isEmpty()) break
             all.addAll(files)
             if (files.size < BATCH_SIZE) break
@@ -66,13 +77,29 @@ class BaiduYunClient(
         return all
     }
 
-    /** 获取目录下的文件列表（单批） */
-    private suspend fun getFileList(path: String = "/", start: Int = 0, limit: Int = BATCH_SIZE): List<BaiduFile> {
+    /**
+     * 获取目录下的单批文件列表，支持分页参数。
+     *
+     * 调用方负责按需累加 start 并判断何时结束（如 `result.size < limit` 即为末页）。
+     * 注意：百度 API 的 `errno != 0` 会被吞为 `emptyList()`，与 [getFileListAll] 行为一致；
+     * 网络/HTTP 异常会直接抛出，由调用方处理。
+     *
+     * @param order 排序字段：`name` / `time` / `size`
+     * @param desc 1 = 降序，0 = 升序
+     */
+    suspend fun getFileList(
+        path: String = "/",
+        start: Int = 0,
+        limit: Int = BATCH_SIZE,
+        order: String = "name",
+        desc: Int = 1,
+    ): List<BaiduFile> {
         val token = requireToken()
         val text = http.get(LIST_URL) {
             parameter("method", "list")
             parameter("dir", path)
-            parameter("order", "name")
+            parameter("order", order)
+            parameter("desc", desc)
             parameter("start", start)
             parameter("limit", limit)
             parameter("access_token", token)

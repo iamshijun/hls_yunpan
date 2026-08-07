@@ -52,6 +52,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import kotlinx.coroutines.launch
+import xyz.asitanokibou.player.baidu.BaiduYunClient
 import xyz.asitanokibou.player.config.AppConfig
 import xyz.asitanokibou.player.config.AppSettings
 import kotlin.math.abs
@@ -61,18 +62,44 @@ import kotlin.math.roundToInt
 fun AppRoot(
     controller: Player?,
     settings: AppSettings,
+    baidu: BaiduYunClient? = null,
     onFullscreenChanged: (Boolean) -> Unit = {},
 ) {
-    var showSettings by remember { mutableStateOf(false) }
+    val nav = rememberNavState()
     val scope = rememberCoroutineScope()
     val config by settings.configFlow.collectAsState(initial = AppConfig())
+    val hasToken = !config.accessToken.isNullOrBlank()
     // 不传 colorScheme 时 MaterialTheme 默认固定为浅色调色板，
     // 系统深色模式下输入框会出现“白字白底”不可见。显式按系统主题切换。
     val colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()
 
+    // 系统返回键：非首页时弹栈，首页时交由系统（关闭 Activity）
+    BackHandler(enabled = nav.canPop) {
+        nav.pop()
+    }
+
     MaterialTheme(colorScheme = colorScheme) {
-        if (showSettings) {
-            SettingsScreen(
+        when (val screen = nav.current) {
+            is Screen.Index -> IndexScreen(
+                onOpenList = { nav.push(Screen.MovieList) },
+                onOpenDirect = { nav.push(Screen.Play(initialPath = "")) },
+                onOpenSettings = { nav.push(Screen.Settings) },
+            )
+            is Screen.MovieList -> MovieListScreen(
+                baidu = baidu,
+                hasToken = hasToken,
+                onBack = { nav.pop() },
+                onPick = { relativePath -> nav.push(Screen.Play(initialPath = relativePath)) },
+            )
+            is Screen.Play -> HomeScreen(
+                controller = controller,
+                hasToken = hasToken,
+                initialPath = screen.initialPath,
+                onBack = { nav.pop() },
+                onOpenSettings = { nav.push(Screen.Settings) },
+                onFullscreenChanged = onFullscreenChanged,
+            )
+            is Screen.Settings -> SettingsScreen(
                 initialToken = config.accessToken ?: "",
                 initialCacheSegments = config.cacheSegments,
                 onSave = { token, cacheSegments ->
@@ -81,16 +108,9 @@ fun AppRoot(
                             config.copy(accessToken = token, cacheSegments = cacheSegments)
                         )
                     }
-                    showSettings = false
+                    nav.pop()
                 },
-                onBack = { showSettings = false },
-            )
-        } else {
-            HomeScreen(
-                controller = controller,
-                hasToken = !config.accessToken.isNullOrBlank(),
-                onOpenSettings = { showSettings = true },
-                onFullscreenChanged = onFullscreenChanged,
+                onBack = { nav.pop() },
             )
         }
     }
@@ -101,10 +121,13 @@ fun AppRoot(
 private fun HomeScreen(
     controller: Player?,
     hasToken: Boolean,
+    initialPath: String,
+    onBack: () -> Unit,
     onOpenSettings: () -> Unit,
     onFullscreenChanged: (Boolean) -> Unit,
 ) {
-    var path by remember { mutableStateOf("") }
+    // 用 initialPath 作为 key 的一部分：列表点进来时用目录名初始化；点 "直接输入" 时为空
+    var path by remember(initialPath) { mutableStateOf(initialPath) }
     val status = remember { mutableStateOf<String?>(null) }
     val error = remember { mutableStateOf<String?>(null) }
     var isFullscreen by remember { mutableStateOf(false) }
@@ -135,7 +158,15 @@ private fun HomeScreen(
             }
         }
         controller?.addListener(listener)
-        onDispose { controller?.removeListener(listener) }
+        onDispose {
+            controller?.removeListener(listener)
+            // 离开播放页（点击"返回"/系统返回键/切到设置页）时先暂停 player：
+            // 暂停会让解码器立即停止推帧，而 setVideoSurface(null) 是异步 IPC，
+            // 若在 view/surface 销毁前仍有帧在推，就会触发 BLAST BufferQueue 死锁
+            //（waitForFreeSlotThenRelock TIMED_OUT）。先 pause 让 IPC 抢在 surface
+            // 销毁前到达 PlaybackService。
+            controller?.pause()
+        }
     }
 
     if (isFullscreen) {
@@ -182,6 +213,7 @@ private fun HomeScreen(
                                 error.value = null
                                 controller?.let { playPath(it, path) }
                             },
+                            onBack = onBack,
                             onOpenSettings = onOpenSettings,
                             hasToken = hasToken,
                             controller = controller,
@@ -217,6 +249,7 @@ private fun HomeScreen(
                                 error.value = null
                                 controller?.let { playPath(it, path) }
                             },
+                            onBack = onBack,
                             onOpenSettings = onOpenSettings,
                             hasToken = hasToken,
                             controller = controller,
@@ -249,6 +282,7 @@ private fun ControlsPanel(
     path: String,
     onPathChange: (String) -> Unit,
     onPlay: () -> Unit,
+    onBack: () -> Unit,
     onOpenSettings: () -> Unit,
     hasToken: Boolean,
     controller: Player?,
@@ -264,7 +298,11 @@ private fun ControlsPanel(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("hls_pan_player", style = MaterialTheme.typography.titleLarge)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onBack) { Text("← 返回") }
+                Spacer(Modifier.width(8.dp))
+                Text("hls_pan_player", style = MaterialTheme.typography.titleLarge)
+            }
             TextButton(onClick = onOpenSettings) { Text("设置") }
         }
 
@@ -388,8 +426,21 @@ private fun HlsPlayerView(
                 }
             },
             update = { view ->
-                view.player = controller
+                // 只在 view 已 attach 到窗口时才绑定 player：
+                // 避免 SurfaceView 还没 layout 时解码器就往 0 尺寸的 surface 推帧，
+                // 触发 BLAST BufferQueue 死锁（waitForFreeSlotThenRelock TIMED_OUT）。
+                if (view.player !== controller) {
+                    if (view.isAttachedToWindow) {
+                        view.player = controller
+                    } else {
+                        view.post { view.player = controller }
+                    }
+                }
                 view.resizeMode = resizeMode
+            },
+            onRelease = { view ->
+                // 离开组合时清空 player 引用，避免 PlayerView 持有 MediaController 造成泄漏
+                view.player = null
             },
             modifier = Modifier.matchParentSize(),
         )

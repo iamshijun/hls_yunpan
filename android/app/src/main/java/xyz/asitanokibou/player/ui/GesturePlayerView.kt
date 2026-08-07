@@ -57,6 +57,10 @@ class GesturePlayerView @JvmOverloads constructor(
     init {
         // seek/前进后退完全交给手势，隐藏默认控制栏上的这些按钮
         hideUnusedControllerButtons()
+        // 视频播放期间保持屏幕常亮：避免息屏后 SurfaceFlinger 停止消费 buffer，
+        // 导致 ExoPlayer 推帧超过 mMaxAcquiredBufferCount 上限触发
+        // waitForFreeSlotThenRelock TIMED_OUT。
+        keepScreenOn = true
     }
 
     private val gestureDetector = GestureDetector(
