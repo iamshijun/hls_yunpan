@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        深色模式下用 Material（深色）平台主题，让窗口背景也是深色，
+        避免系统 forceDark 把 View 体系反色后与 Compose 浅色调色板冲突
+        （会出现输入框白字白底不可见）。
+        Compose 侧的颜色由 MaterialTheme(colorScheme = ...) 决定。
+    -->
+    <style name="Theme.HlsPanPlayer" parent="android:Theme.Material.NoActionBar" />
+</resources>

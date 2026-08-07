@@ -216,9 +216,3 @@ cp segment_* ./my_videos/video1/
 ```
 
 If the directory doesn't exist, the service will automatically use cloud mode and display a warning. This allows for development without hitting BaiduYun API limits and provides offline capability for testing.
-
-### Network Access
-The service supports multiple access methods:
-- **Direct file open**: Open index.html directly → uses localhost
-- **HTTP access**: Via IP address → uses server IP
-- **Both work seamlessly**: The player detects the access method automatically

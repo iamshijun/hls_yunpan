@@ -6,8 +6,10 @@ import android.media.AudioManager
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -18,10 +20,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -60,8 +66,11 @@ fun AppRoot(
     var showSettings by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val config by settings.configFlow.collectAsState(initial = AppConfig())
+    // 不传 colorScheme 时 MaterialTheme 默认固定为浅色调色板，
+    // 系统深色模式下输入框会出现“白字白底”不可见。显式按系统主题切换。
+    val colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()
 
-    MaterialTheme {
+    MaterialTheme(colorScheme = colorScheme) {
         if (showSettings) {
             SettingsScreen(
                 initialToken = config.accessToken ?: "",
@@ -146,66 +155,148 @@ private fun HomeScreen(
         }
     } else {
         Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-            Column(
+            BoxWithConstraints(
                 modifier = Modifier
-                    .padding(innerPadding)
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                    .fillMaxSize()
+                    .padding(innerPadding),
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("hls_pan_player", style = MaterialTheme.typography.titleLarge)
-                    TextButton(onClick = onOpenSettings) { Text("设置") }
-                }
+                // 平板/手机横屏时 maxWidth > maxHeight：改用 Row 布局把控件放左侧、播放器放右侧，
+                // 避免 16:9 播放器在宽屏下占据绝大部分高度、把输入框挤出可见区域。
+                val isWide = maxWidth > maxHeight
 
-                OutlinedTextField(
-                    value = path,
-                    onValueChange = { path = it },
-                    label = { Text("媒体目录路径，例如 video1 或 movies/我的视频") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-
-                Button(
-                    onClick = {
-                        error.value = null
-                        controller?.let { playPath(it, path) }
-                    },
-                    enabled = controller != null && path.isNotBlank(),
-                ) {
-                    Text("播放")
+                if (isWide) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        ControlsPanel(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .verticalScroll(rememberScrollState()),
+                            path = path,
+                            onPathChange = { path = it },
+                            onPlay = {
+                                error.value = null
+                                controller?.let { playPath(it, path) }
+                            },
+                            onOpenSettings = onOpenSettings,
+                            hasToken = hasToken,
+                            controller = controller,
+                            status = status.value,
+                            error = error.value,
+                        )
+                        Box(
+                            modifier = Modifier
+                                .weight(1.4f)
+                                .fillMaxHeight(),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            HlsPlayerView(
+                                controller = controller,
+                                onToggleFullscreen = { isFullscreen = !isFullscreen },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .aspectRatio(16f / 9f),
+                                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT,
+                            )
+                        }
+                    }
+                } else {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        ControlsPanel(
+                            modifier = Modifier.fillMaxWidth(),
+                            path = path,
+                            onPathChange = { path = it },
+                            onPlay = {
+                                error.value = null
+                                controller?.let { playPath(it, path) }
+                            },
+                            onOpenSettings = onOpenSettings,
+                            hasToken = hasToken,
+                            controller = controller,
+                            status = status.value,
+                            error = error.value,
+                        )
+                        Spacer(Modifier.padding(4.dp))
+                        HlsPlayerView(
+                            controller = controller,
+                            onToggleFullscreen = { isFullscreen = !isFullscreen },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(16f / 9f),
+                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT,
+                        )
+                    }
                 }
-
-                if (!hasToken) {
-                    Text(
-                        "请先在「设置」中填写百度网盘 access_token",
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                }
-                if (controller == null) {
-                    Text("正在连接播放服务...", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                status.value?.let {
-                    Text("状态：$it", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                error.value?.let {
-                    Text("播放错误：$it", color = MaterialTheme.colorScheme.error)
-                }
-
-                Spacer(Modifier.padding(4.dp))
-
-                HlsPlayerView(
-                    controller = controller,
-                    onToggleFullscreen = { isFullscreen = !isFullscreen },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(16f / 9f),
-                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT,
-                )
             }
+        }
+    }
+}
+
+/**
+ * 控件面板：标题行 + 路径输入 + 播放按钮 + 状态/错误提示。
+ * 横屏布局里作为左侧列使用（外层已加 verticalScroll），竖屏布局里作为顶部列使用。
+ */
+@Composable
+private fun ControlsPanel(
+    modifier: Modifier = Modifier,
+    path: String,
+    onPathChange: (String) -> Unit,
+    onPlay: () -> Unit,
+    onOpenSettings: () -> Unit,
+    hasToken: Boolean,
+    controller: Player?,
+    status: String?,
+    error: String?,
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("hls_pan_player", style = MaterialTheme.typography.titleLarge)
+            TextButton(onClick = onOpenSettings) { Text("设置") }
+        }
+
+        OutlinedTextField(
+            value = path,
+            onValueChange = onPathChange,
+            label = { Text("媒体目录路径，例如 video1 或 movies/我的视频") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        Button(
+            onClick = onPlay,
+            enabled = controller != null && path.isNotBlank(),
+        ) {
+            Text("播放")
+        }
+
+        if (!hasToken) {
+            Text(
+                "请先在「设置」中填写百度网盘 access_token",
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        if (controller == null) {
+            Text("正在连接播放服务...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        status?.let {
+            Text("状态：$it", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        error?.let {
+            Text("播放错误：$it", color = MaterialTheme.colorScheme.error)
         }
     }
 }
