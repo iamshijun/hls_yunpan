@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Compose 应用使用平台主题即可，颜色主题在 Compose 侧通过 MaterialTheme 定义 -->
-    <style name="Theme.HlsPanPlayer" parent="android:Theme.Material.Light.NoActionBar" />
-</resources>
