@@ -37,7 +37,6 @@ class Settings(BaseSettings):
     )
 
     # HLS配置
-    m3u8_path_prefix: str = "/hls"  # HLS文件路径前缀
     yun_path_prefix: str = "/apps/movies"  # 网盘存储根路径（HLS 文件所在目录）
 
     # 本地模式配置

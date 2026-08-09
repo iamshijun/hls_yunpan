@@ -60,7 +60,6 @@ def create_app(
         hls_svc = HLSProxyService(
             yun_service=yun_svc,
             cache_service=cache_svc,
-            hls_root_path=settings.m3u8_path_prefix,
             yun_path_prefix=settings.yun_path_prefix,
             cache_segments=settings.cache_segments,
             local_path=settings.local_path

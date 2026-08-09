@@ -19,6 +19,10 @@ from .cache_service import CacheService
 
 logger = logging.getLogger(__name__)
 
+# 路由前缀固定为 /hls（见 app/routes/hls.py => APIRouter(prefix="/hls", ...），请求路径始终以此开头，
+# 各源剥掉该前缀后映射到自己的内容根（本地磁盘 / 网盘）。
+HLS_URL_PREFIX = "/hls"
+
 
 @dataclass
 class SourceResult:
@@ -47,9 +51,8 @@ class SegmentSource(ABC):
 class LocalSource(SegmentSource):
     """本地磁盘内容源"""
 
-    def __init__(self, local_path: str, hls_root_path: str = "/hls"):
+    def __init__(self, local_path: str):
         self.local_path = local_path
-        self.hls_root_path = hls_root_path
 
     async def resolve(self, request_path: str, stream: bool) -> Optional[SourceResult]:
         file_path = self._get_local_file_path(request_path)
@@ -61,9 +64,9 @@ class LocalSource(SegmentSource):
         return SourceResult(content=content)
 
     def _get_local_file_path(self, request_path: str) -> str:
-        """将请求路径映射到本地文件路径。"""
-        if request_path.startswith(self.hls_root_path):
-            request_path = request_path[len(self.hls_root_path):]
+        """将请求路径映射到本地文件路径。(截掉hls route前缀)"""
+        if request_path.startswith(HLS_URL_PREFIX):
+            request_path = request_path[len(HLS_URL_PREFIX):]
         return os.path.join(self.local_path, request_path.lstrip('/'))
 
     def _read_local_file(self, file_path: str) -> Optional[bytes]:
@@ -85,13 +88,11 @@ class YunSource(SegmentSource):
         self,
         yun_service: BaiduYunService,
         cache_service: CacheService,
-        hls_root_path: str = "/hls",
         yun_path_prefix: str = "/apps/movies",
         cache_segments: bool = False,
     ):
         self.yun_service = yun_service
         self.cache_service = cache_service
-        self.hls_root_path = hls_root_path
         self.yun_path_prefix = yun_path_prefix
         self.cache_segments = cache_segments
         self.dir_locks: Dict[str, asyncio.Lock] = {}
@@ -118,9 +119,9 @@ class YunSource(SegmentSource):
         return SourceResult(content=content)
 
     def _convert_to_yun_path(self, request_path: str) -> str:
-        """将请求路径转换为网盘路径。"""
-        if request_path.startswith(self.hls_root_path):
-            request_path = request_path[len(self.hls_root_path):]
+        """将请求路径转换为网盘路径。(截掉hls route前缀,后面的即为云盘的路径)"""
+        if request_path.startswith(HLS_URL_PREFIX):
+            request_path = request_path[len(HLS_URL_PREFIX):]
         return f"{self.yun_path_prefix}{request_path}"
 
     def _get_dir_lock(self, dir_path: str) -> asyncio.Lock:

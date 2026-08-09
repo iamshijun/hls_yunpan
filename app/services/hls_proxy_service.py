@@ -36,12 +36,10 @@ class HLSProxyService:
         self,
         yun_service: BaiduYunService,
         cache_service: CacheService,
-        hls_root_path: str = "/hls",
         yun_path_prefix: str = "/apps/movies",
         cache_segments: bool = False,
         local_path: str = "./local_hls"
     ):
-        self.hls_root_path = hls_root_path
         self.cache_segments = cache_segments
         self.parser = M3U8Parser()
 
@@ -49,7 +47,7 @@ class HLSProxyService:
         self.local_mode = os.path.exists(local_path) and os.path.isdir(local_path)
         if self.local_mode:
             self.sources: list[SegmentSource] = [
-                LocalSource(local_path=local_path, hls_root_path=hls_root_path)
+                LocalSource(local_path=local_path)
             ]
             logger.info(f"本地模式已启用，仅使用本地目录: {local_path}")
         else:
@@ -57,7 +55,6 @@ class HLSProxyService:
                 YunSource(
                     yun_service=yun_service,
                     cache_service=cache_service,
-                    hls_root_path=hls_root_path,
                     yun_path_prefix=yun_path_prefix,
                     cache_segments=cache_segments,
                 )
