@@ -3,14 +3,15 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from config.settings import settings
 from app.services.baiduyun_service import BaiduYunService
 from app.services.cache_service import CacheService
-from app.services.hls_proxy_service import HLSProxyService
+from app.services.hls_proxy_service import HLSProxyService, HLSProxyError
 from app.services.fsid_store import create_fsid_store
 from app.routes import health, hls
 
@@ -60,10 +61,12 @@ def create_app(
             yun_service=yun_svc,
             cache_service=cache_svc,
             hls_root_path=settings.m3u8_path_prefix,
+            yun_path_prefix=settings.yun_path_prefix,
             cache_segments=settings.cache_segments,
             local_path=settings.local_path
         )
-        hls.init_service(hls_svc)
+        # 将服务注入 app.state，路由通过 Depends(get_hls_service) 获取
+        app.state.hls_proxy_service = hls_svc
         logger.info("服务初始化完成")
         yield
         await yun_svc.close()
@@ -77,6 +80,11 @@ def create_app(
         docs_url="/docs" if docs_enabled else None,
         redoc_url="/redoc" if docs_enabled else None,
     )
+
+    # HLS 代理内部错误 → 500 JSON（traceback 已在服务内记录）
+    @app.exception_handler(HLSProxyError)
+    async def hls_proxy_error_handler(request: Request, exc: HLSProxyError):
+        return JSONResponse(status_code=500, content={"detail": str(exc)})
 
     # CORS
     app.add_middleware(

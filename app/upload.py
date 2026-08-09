@@ -13,28 +13,30 @@ Baidu Yunpan upload tool (standalone CLI).
 
     # Keep local file after upload
     python -m app.upload video.ts --no-delete-after-upload
+
+上传逻辑（含重试）由 app.services.baiduyun_service.BaiduYunService 提供，
+本模块只是参数解析与进度展示的 CLI 外壳。
 """
 
 import argparse
-import io
+import asyncio
 import json
 import os
 import sys
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
-import httpx
 from dotenv import load_dotenv
 from tqdm import tqdm
+
+from config.settings import settings
+from app.services.baiduyun_service import BaiduYunService
 
 
 # ── Constants ──────────────────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_ENV_FILE = PROJECT_ROOT / ".env"
-DEFAULT_REMOTE_PREFIX = "/apps/movies"
-UPLOAD_URL = "https://d.pcs.baidu.com/rest/2.0/pcs/file"
+DEFAULT_REMOTE_PREFIX = settings.yun_path_prefix
 PROGRESS_FILENAME = ".yunpan_upload_progress.json"
 
 DEFAULT_RETRIES = 5
@@ -68,6 +70,12 @@ def _human_size(num_bytes: int) -> str:
             return f"{num_bytes:.1f} {unit}"
         num_bytes /= 1024
     return f"{num_bytes:.1f} TB"
+
+
+def _error_detail(exc: Exception) -> str:
+    """Extract a short error message for display."""
+    msg = str(exc).strip()
+    return msg[:120]
 
 
 # ── Progress tracking (directory resume) ───────────────────────────────────
@@ -118,81 +126,12 @@ def _clear_progress(local_dir: Path) -> None:
     _progress_path(local_dir).unlink(missing_ok=True)
 
 
-# ── Upload logic ───────────────────────────────────────────────────────────
-
-
-def _do_upload_raw(local_path: Path, remote_path: str, token: str, ondup: str) -> dict:
-    """Upload a single file (no retry, no logging).  Raise on failure."""
-    
-    with open(local_path, "rb") as fh:
-        response = httpx.post(
-            UPLOAD_URL,
-            params={
-                "method": "upload",
-                "access_token": token,
-                "path": remote_path,
-                "ondup": ondup,
-                "rtype": 3,
-            },
-            files={"file": (local_path.name, fh, "application/octet-stream")},
-            timeout=httpx.Timeout(600.0, connect=30.0),
-        )
-    #response.raise_for_status()
-    if response.status_code != 200:
-        print(f'response code {response.status_code} body: {response.text}')
-        raise RuntimeError(f"HTTP error {response.status_code}: {response.text}")
-    result: dict = response.json()
-
-    errno = result.get("errno")
-    if errno is not None and errno != 0:
-        errmsg = result.get("errmsg", "unknown error")
-        raise RuntimeError(f"API errno={errno}: {errmsg}")
-
-    return result
-
-
-def _upload_with_retry(
-    local_path: Path,
-    remote_path: str,
-    token: str,
-    ondup: str,
-    max_retries: int,
-) -> dict:
-    """Upload a single file with exponential-backoff retry.
-
-    Retry delays: 1 s, 2 s, 4 s, 8 s, ...
-    """
-    last_error = None
-    for attempt in range(max_retries + 1):
-        if attempt > 0:
-            delay = 2 ** (attempt - 1)
-            tqdm.write(
-                f"  [retry {attempt}/{max_retries}] {local_path.name} "
-                f"(wait {delay}s)"
-            )
-            time.sleep(delay)
-        try:
-            return _do_upload_raw(local_path, remote_path, token, ondup)
-        except (httpx.HTTPStatusError, httpx.RequestError, RuntimeError, OSError) as e:
-            last_error = e
-
-    raise RuntimeError(
-        f"Failed after {max_retries} retries: {last_error}"
-    ) from last_error
-
-
-def _error_detail(exc: Exception) -> str:
-    """Extract a short error message for display."""
-    msg = str(exc).strip()
-    return msg[:120]
-
-
 # ── Single-file upload ─────────────────────────────────────────────────────
 
-def upload_file(
+async def upload_file(
+    svc: BaiduYunService,
     local_path: str,
     remote_path: str,
-    token: str,
     ondup: str,
     max_retries: int,
     max_size: int | None = None,
@@ -226,7 +165,7 @@ def upload_file(
         print(f"Retries:   {max_retries}")
     print()
 
-    result = _upload_with_retry(local, remote_path, token, ondup, max_retries)
+    result = await svc.upload_file(str(local), remote_path, ondup=ondup, max_retries=max_retries)
 
     print()
     print("Upload successful!")
@@ -247,84 +186,12 @@ def upload_file(
     return result
 
 
-# ── Bytes upload (no-disk mode) ────────────────────────────────────────────
-# 供外部使用 非cli独立运行的时候使用
-def _do_upload_bytes(data: bytes, filename: str, remote_path: str, token: str, ondup: str) -> dict:
-    """Upload raw bytes as a file (no retry, no logging).  Raise on failure."""
-    response = httpx.post(
-        UPLOAD_URL,
-        params={
-            "method": "upload",
-            "access_token": token,
-            "path": remote_path,
-            "ondup": ondup,
-            "rtype": 3,
-        },
-        files={"file": (filename, io.BytesIO(data), "application/octet-stream")},
-        timeout=httpx.Timeout(600.0, connect=30.0),
-    )
-    #response.raise_for_status()
-    if response.status_code != 200:
-        print(f'response code {response.status_code} body: {response.text}')
-        raise RuntimeError(f"HTTP error {response.status_code}: {response.text}")
-    
-    result: dict = response.json()
-
-    errno = result.get("errno")
-    if errno is not None and errno != 0:
-        errmsg = result.get("errmsg", "unknown error")
-        raise RuntimeError(f"API errno={errno}: {errmsg}")
-
-    return result
-
-
-def _upload_bytes_with_retry(
-    data: bytes, filename: str, remote_path: str,
-    token: str, ondup: str, max_retries: int,
-) -> dict:
-    """Upload raw bytes with exponential-backoff retry.
-
-    Retry delays: 1 s, 2 s, 4 s, 8 s, ...
-    """
-    last_error = None
-    for attempt in range(max_retries + 1):
-        if attempt > 0:
-            delay = 2 ** (attempt - 1)
-            tqdm.write(
-                f"  [retry {attempt}/{max_retries}] {filename} "
-                f"(wait {delay}s)"
-            )
-            time.sleep(delay)
-        try:
-            return _do_upload_bytes(data, filename, remote_path, token, ondup)
-        except (httpx.HTTPStatusError, httpx.RequestError, RuntimeError, OSError) as e:
-            last_error = e
-
-    raise RuntimeError(
-        f"Failed after {max_retries} retries: {last_error}"
-    ) from last_error
-
-
-def upload_bytes(
-    data: bytes,
-    filename: str,
-    remote_path: str,
-    token: str,
-    ondup: str,
-    max_retries: int,
-) -> dict:
-    """Upload raw bytes to Baidu Yunpan (with retry)."""
-    return _upload_bytes_with_retry(
-        data, filename, remote_path, token, ondup, max_retries
-    )
-
-
 # ── Directory upload ───────────────────────────────────────────────────────
 
-def upload_directory(
+async def upload_directory(
+    svc: BaiduYunService,
     local_dir: str,
     remote_dir: str,
-    token: str,
     ondup: str,
     resume: bool,
     workers: int,
@@ -334,7 +201,7 @@ def upload_directory(
     """Upload every ordinary file in *local_dir* to *remote_dir*.
 
     - **resume**: skip already-uploaded files (persisted in *local_dir*).
-    - **workers**: number of parallel upload threads (default 3).
+    - **workers**: number of parallel uploads (default 5).
     - **max_retries**: per-file retry count with exponential backoff.
     """
     local = Path(local_dir).resolve()
@@ -347,7 +214,7 @@ def upload_directory(
         sys.exit(1)
 
     all_files = sorted(
-        [p for p in local.iterdir() if p.is_file()],
+        [p for p in local.iterdir() if p.is_file() and p.name != PROGRESS_FILENAME],
         key=lambda p: p.name,
     )
 
@@ -357,20 +224,12 @@ def upload_directory(
 
     # Filter files by size limit
     if max_size is not None:
-        size_filtered_files = []
-        size_skipped_count = 0
-
-        for fpath in all_files:
-            if fpath.stat().st_size > max_size:
-                size_filtered_files.append(fpath)
-                size_skipped_count += 1
-
-        if size_filtered_files:
-            print(f"Size limit: {_human_size(max_size)} - skipping {size_skipped_count} file(s) that exceed limit:")
-            for fpath in size_filtered_files:
+        size_skipped = [f for f in all_files if f.stat().st_size > max_size]
+        if size_skipped:
+            print(f"Size limit: {_human_size(max_size)} - skipping {len(size_skipped)} file(s) that exceed limit:")
+            for fpath in size_skipped:
                 print(f"  SKIPPED: {fpath.name} ({_human_size(fpath.stat().st_size)})")
             print()
-
         all_files = [f for f in all_files if f.stat().st_size <= max_size]
 
     if not all_files:
@@ -413,6 +272,16 @@ def upload_directory(
     failed = 0
     failed_details: list[tuple[str, str]] = []
 
+    semaphore = asyncio.Semaphore(workers)
+
+    async def upload_one(fpath: Path) -> tuple[Path, Exception | None]:
+        async with semaphore:
+            try:
+                await svc.upload_file(str(fpath), remote_dir + fpath.name, ondup=ondup, max_retries=max_retries)
+                return fpath, None
+            except Exception as exc:
+                return fpath, exc
+
     # ── Upload with tqdm ─────────────────────────────────────────────
     with tqdm(
         total=len(all_files),
@@ -422,53 +291,28 @@ def upload_directory(
         ncols=100,
     ) as pbar:
 
+        async def finish(fpath: Path, exc: Exception | None) -> None:
+            nonlocal success, failed
+            if exc is None:
+                success += 1
+                if resume:
+                    uploaded.add(fpath.name)
+                    _save_progress(local, remote_dir, uploaded)
+            else:
+                failed += 1
+                failed_details.append((fpath.name, _error_detail(exc)))
+                tqdm.write(f"  FAIL  {fpath.name}  {_error_detail(exc)}")
+            pbar.update(1)
+
         if workers == 1:
-            # ── Sequential ────────────────────────────────────────────
             for fpath in pending:
-                remote_path = remote_dir + fpath.name
-                try:
-                    _upload_with_retry(fpath, remote_path, token, ondup, max_retries)
-                    success += 1
-
-                    if resume:
-                        uploaded.add(fpath.name)
-                        _save_progress(local, remote_dir, uploaded)
-                except Exception as exc:
-                    failed += 1
-                    failed_details.append((fpath.name, _error_detail(exc)))
-                    tqdm.write(f"  FAIL  {fpath.name}  {_error_detail(exc)}")
-
-                pbar.update(1)
+                fpath, exc = await upload_one(fpath)
+                await finish(fpath, exc)
         else:
-            # ── Parallel ──────────────────────────────────────────────
-            with ThreadPoolExecutor(max_workers=workers) as executor:
-                future_to_file = {
-                    executor.submit(
-                        _upload_with_retry,
-                        fpath,
-                        remote_dir + fpath.name,
-                        token,
-                        ondup,
-                        max_retries,
-                    ): fpath
-                    for fpath in pending
-                }
-
-                for future in as_completed(future_to_file):
-                    fpath = future_to_file[future]
-                    try:
-                        future.result()
-                        success += 1
-
-                        if resume:
-                            uploaded.add(fpath.name)
-                            _save_progress(local, remote_dir, uploaded)
-                    except Exception as exc:
-                        failed += 1
-                        failed_details.append((fpath.name, _error_detail(exc)))
-                        tqdm.write(f"  FAIL  {fpath.name}  {_error_detail(exc)}")
-
-                    pbar.update(1)
+            tasks = [asyncio.create_task(upload_one(fpath)) for fpath in pending]
+            for coro in asyncio.as_completed(tasks):
+                fpath, exc = await coro
+                await finish(fpath, exc)
 
     # ── Summary ──────────────────────────────────────────────────────
     print()
@@ -586,7 +430,7 @@ Examples:
         "-o",
         choices=["fail", "overwrite", "newcopy"],
         default="overwrite",
-        help="Action when target file already exists (default: fail).",
+        help="Action when target file already exists (default: overwrite).",
     )
     parser.add_argument(
         "--env-file",
@@ -604,7 +448,7 @@ Examples:
         "-w",
         type=int,
         default=DEFAULT_WORKERS,
-        help=f"Number of parallel upload threads for directory mode "
+        help=f"Number of parallel uploads for directory mode "
              f"(default: {DEFAULT_WORKERS}).",
     )
     parser.add_argument(
@@ -636,9 +480,7 @@ Examples:
     return parser
 
 
-def main() -> None:
-    args = build_parser().parse_args()
-
+async def _run(args: argparse.Namespace) -> None:
     token = args.token or load_access_token(args.env_file)
     path_arg = Path(args.file)
 
@@ -650,28 +492,34 @@ def main() -> None:
         remote_path = args.remote_path
     else:
         remote_path = f"{DEFAULT_REMOTE_PREFIX}/{path_arg.name}"
-    
-    if path_arg.is_dir():
-        upload_directory(
-            local_dir=str(path_arg),
-            remote_dir=remote_path,
-            token=token,
-            ondup=args.ondup,
-            resume=not args.no_resume,
-            workers=args.workers,
-            max_retries=args.retries,
-            max_size=args.max_size,
-        )
-    else:
-        upload_file(
-            local_path=str(path_arg),
-            remote_path=remote_path,
-            token=token,
-            ondup=args.ondup,
-            max_retries=args.retries,
-            max_size=args.max_size,
-            delete_after_upload=delete_after_upload,
-        )
+
+    async with BaiduYunService(access_token=token) as svc:
+        if path_arg.is_dir():
+            await upload_directory(
+                svc,
+                local_dir=str(path_arg),
+                remote_dir=remote_path,
+                ondup=args.ondup,
+                resume=not args.no_resume,
+                workers=args.workers,
+                max_retries=args.retries,
+                max_size=args.max_size,
+            )
+        else:
+            await upload_file(
+                svc,
+                local_path=str(path_arg),
+                remote_path=remote_path,
+                ondup=args.ondup,
+                max_retries=args.retries,
+                max_size=args.max_size,
+                delete_after_upload=delete_after_upload,
+            )
+
+
+def main() -> None:
+    args = build_parser().parse_args()
+    asyncio.run(_run(args))
 
 
 if __name__ == "__main__":

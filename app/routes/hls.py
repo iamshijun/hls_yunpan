@@ -1,6 +1,5 @@
 """HLS路由 - 处理HLS相关的HTTP请求"""
-from fastapi import APIRouter, Request, HTTPException
-from fastapi.responses import Response
+from fastapi import APIRouter, Request, HTTPException, Depends
 import logging
 
 from ..services.hls_proxy_service import HLSProxyService
@@ -9,16 +8,19 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/hls", tags=["HLS"])
 
-# 全局服务实例
-hls_proxy_service: HLSProxyService = None
-
-def init_service(service: HLSProxyService):
-    """初始化服务"""
-    global hls_proxy_service
-    hls_proxy_service = service
+def get_hls_service(request: Request) -> HLSProxyService:
+    """从应用状态获取 HLS 代理服务实例（由 lifespan 注入）"""
+    service = getattr(request.app.state, "hls_proxy_service", None)
+    if service is None:
+        raise HTTPException(status_code=500, detail="服务未初始化")
+    return service
 
 @router.get("/{path:path}")
-async def hls_proxy(path: str, request: Request):
+async def hls_proxy(
+    path: str,
+    request: Request,
+    hls_proxy_service: HLSProxyService = Depends(get_hls_service),
+):
     """
     HLS代理接口
 
@@ -27,13 +29,11 @@ async def hls_proxy(path: str, request: Request):
     Args:
         path: 文件路径
         request: FastAPI请求对象
+        hls_proxy_service: HLS代理服务（依赖注入）
 
     Returns:
         文件内容
     """
-    if not hls_proxy_service:
-        raise HTTPException(status_code=500, detail="服务未初始化")
-
     # 构建完整路径
     request_path = f"/hls/{path}"
 

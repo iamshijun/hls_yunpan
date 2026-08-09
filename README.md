@@ -38,12 +38,14 @@ hls_yunpan/
 │   │   ├── hls.py             # HLS代理路由
 │   │   └── health.py          # 健康检查
 │   ├── services/
-│   │   ├── baiduyun_service.py    # 百度网盘服务
+│   │   ├── baiduyun_service.py    # 百度网盘服务（列表/下载/流式/上传）
 │   │   ├── cache_service.py       # 文件内容缓存 + fsid 委托
 │   │   ├── fsid_store.py          # fsid 存储抽象 (内存/磁盘/Redis)
-│   │   └── hls_proxy_service.py   # HLS代理服务
+│   │   ├── hls_proxy_service.py   # HLS代理服务（请求流水线）
+│   │   └── segment_source.py      # 内容源抽象 (本地/网盘)
+│   ├── upload.py                  # 上传 CLI（委托 BaiduYunService）
 │   └── utils/
-│       └── m3u8_parser.py     # M3U8解析工具
+│       └── m3u8_parser.py         # M3U8解析/重写/生成
 ├── config/
 │   └── settings.py            # 配置管理 (唯一配置源)
 ├── web/
@@ -105,10 +107,10 @@ http://localhost:8000/hls/segment_0001.ts
 
 ## 网盘文件组织
 
-在百度网盘中，HLS文件应按以下结构组织：
+在百度网盘中，HLS文件应按 `YUN_PATH_PREFIX`（默认 `/apps/movies`）组织：
 
 ```
-/Apps/hls/
+/apps/movies/
 ├── video1.m3u8
 ├── video1/
 │   ├── segment_0001.ts
@@ -129,12 +131,30 @@ http://localhost:8000/hls/segment_0001.ts
 | `CACHE_TTL` | 缓存过期时间(秒) | `3600` |
 | `CACHE_ENABLED` | 是否启用磁盘缓存（只读文件系统如 Vercel 设为 `false`） | `True` |
 | `CACHE_SEGMENTS` | 是否缓存 HLS 分片文件 | `False` |
+| `YUN_PATH_PREFIX` | 网盘 HLS 存储根路径（`/hls/{path}` 映射到 `<YUN_PATH_PREFIX>/{path}`） | `/apps/movies` |
 | `LOCAL_PATH` | 本地 HLS 文件目录（存在则自动启用本地模式） | `./local_hls` |
 | `REDIS_URL` / `REDIS_TOKEN` | Redis / Upstash (Vercel KV) 地址，用于跨实例存储 fsid | - |
 
 > `REDIS_URL` / `REDIS_TOKEN` 同时兼容 Vercel/Upstash 注入的变量名：
 > `KV_REST_API_URL`/`KV_REST_API_TOKEN` 与 `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`。
 > 一旦配置了 Redis，fsid 将存入 Redis（不受 `CACHE_ENABLED` 影响）。
+
+> **本地模式**：当 `LOCAL_PATH` 目录存在时自动启用，所有文件只从本地读取，缺失返回 404，不会回落到网盘（完全离线）。想回落到网盘就删除/改掉 `LOCAL_PATH`。
+
+## 上传文件到网盘
+
+```bash
+# 上传单个文件（默认目标根为 YUN_PATH_PREFIX）
+python -m app.upload video.ts --retries 5
+
+# 上传目录（5 并发 + 断点续传）
+python -m app.upload ./my_videos /apps/movies/my_videos -w 5
+
+# 跳过超过 100MB 的文件、不续传、覆盖同名
+python -m app.upload ./my_videos /apps/movies/my_videos --max-size 100MB --no-resume -o overwrite
+```
+
+上传逻辑（含重试）由 `BaiduYunService` 提供，CLI 只负责参数解析与进度展示。默认上传成功后删除本地文件，加 `--no-delete-after-upload` 保留。
 
 ## Vercel 部署
 
@@ -224,7 +244,6 @@ GET /hls/video/segment_0001.ts
 ## 待优化功能
 
 - [ ] 支持更多网盘服务 (阿里云盘、天翼云盘)
-- [ ] 断点续传支持
 - [ ] 缓存清理策略优化
 - [ ] 监控和日志分析
 - [ ] Docker支持

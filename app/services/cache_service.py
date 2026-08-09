@@ -90,10 +90,6 @@ class CacheService:
         await self.fsid_store.set_many(fsid_map)
         logger.info(f"批量fsid缓存已写入 [{dir_path}]: {len(fsid_map)} 条记录")
 
-    async def clear_dir_fsid_cache(self, dir_path: str) -> None:
-        """清理指定目录的fsid缓存"""
-        await self.fsid_store.clear_dir(dir_path)
-
     async def is_valid(self, path: str) -> bool:
         """
         检查缓存是否有效

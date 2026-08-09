@@ -9,8 +9,7 @@ Yunpan HLS Proxy is a Python web proxy service that uses BaiduYun (Baidu Cloud) 
 **Technology Stack:**
 - FastAPI with Uvicorn (ASGI server)
 - httpx for async HTTP requests to BaiduYun API
-- bypy for BaiduYun API client
-- pydantic for settings management
+- pydantic-settings for settings management
 - hls.js for frontend HLS playback
 
 ## Architecture
@@ -18,9 +17,9 @@ Yunpan HLS Proxy is a Python web proxy service that uses BaiduYun (Baidu Cloud) 
 The application follows a service-oriented architecture with clear separation of concerns:
 
 ```
-Media Player → FastAPI Web Service → HLS Proxy Service → BaiduYun Service
-                      ↓                                 ↓
-               Local Cache ←←←←←←←←←←←←←←←←←←← BaiduYun API
+Media Player → FastAPI Web Service → HLS Proxy Service → SegmentSource (Local / Yun) → BaiduYun Service
+                      ↓                                            ↓
+               Local Cache ←←←←←←←←←←←←←←←←←←←←←←←←←←←←← BaiduYun API
 ```
 
 **Key Components:**
@@ -29,29 +28,34 @@ Media Player → FastAPI Web Service → HLS Proxy Service → BaiduYun Service
 
 2. **Vercel Entry** (`api/index.py`): Minimal serverless entry that just does `from app.main import app`. Vercel's `@vercel/python` runtime hosts this ASGI app directly, so local and Vercel run the exact same application.
 
-3. **HLS Proxy Service** (`app/services/hls_proxy_service.py`): Core service that:
-   - Converts HTTP request paths to BaiduYun file paths
-   - Handles m3u8 playlist and .ts chunk requests
-   - Rewrites URLs in m3u8 files for correct chunk references
-   - Manages directory-level fsid caching for performance
+3. **HLS Proxy Service** (`app/services/hls_proxy_service.py`): Thin request pipeline that:
+   - Composes `SegmentSource` adapters (local vs cloud) and serves each request from the first that can
+   - Handles m3u8 playlist and .ts chunk requests — chunks stream, playlists buffer and get URL-rewritten
+   - Builds HTTP responses; internal failures raise `HLSProxyError`, mapped to JSON 500 by an exception handler
+   - Wired to routes via `Depends(get_hls_service)`, which reads the service from `app.state`
 
-4. **BaiduYun Service** (`app/services/baiduyun_service.py`): External API integration layer that:
-   - Handles all communication with BaiduYun REST API
-   - Implements file listing, metadata retrieval, and download operations
-   - Provides streaming download for large files
+4. **Segment Source** (`app/services/segment_source.py`): Content-source seam with two adapters:
+   - `LocalSource`: serves HLS files from local disk
+   - `YunSource`: serves from BaiduYun — converts request paths to yun paths, resolves fsids (with directory-level batch loading), reads/writes the content cache, and streams chunks
+   - Local mode is authoritative: when `LOCAL_PATH` exists only local files are served, and missing files return 404 (the cloud is never contacted)
 
-5. **Cache Service** (`app/services/cache_service.py`): Performance optimization layer with:
+5. **BaiduYun Service** (`app/services/baiduyun_service.py`): External API integration layer that:
+   - Handles all communication with BaiduYun REST API (list, meta, download, stream, upload)
+   - Provides streaming download for large files and uploads with exponential-backoff retry (`upload_file` / `upload_bytes`)
+   - Owns endpoint URLs, token handling, and `errno` decoding in one place
+
+6. **Cache Service** (`app/services/cache_service.py`): Performance optimization layer with:
    - Local file content caching to reduce API calls (controlled by `CACHE_ENABLED`)
    - TTL-based cache expiration
    - Delegates all fsid caching to an injected `FsidStore`
 
-6. **Fsid Store** (`app/services/fsid_store.py`): Pluggable fsid persistence abstraction (`FsidStore`) with three backends selected by `create_fsid_store()`:
+7. **Fsid Store** (`app/services/fsid_store.py`): Pluggable fsid persistence abstraction (`FsidStore`) with three backends selected by `create_fsid_store()`:
    - `MemoryFsidStore`: in-memory only (per-process / warm-instance lifetime)
    - `DiskFsidStore`: local disk JSON per directory, with in-memory L1 (default for local)
    - `RedisFsidStore`: Redis / Upstash (Vercel KV), shared across instances and cold starts
    - Selection priority: **Redis > disk (`CACHE_ENABLED`) > memory**
 
-7. **M3U8 Parser** (`app/utils/m3u8_parser.py`): Utility for parsing and generating HLS playlists
+8. **M3U8 Parser** (`app/utils/m3u8_parser.py`): Owns HLS playlist parsing and URL rewriting. `rewrite()` rewrites relative URIs in bare lines and tag attributes (`#EXT-X-MAP` / `#EXT-X-MEDIA`), and strips `#EXT-X-KEY` (encryption-key) lines by default (`keep_key=True` to keep and rewrite them)
 
 ## Running the Application
 
@@ -84,6 +88,7 @@ Configuration is handled via `.env` file (see `.env.example` for template). Key 
 - `CACHE_TTL`: Cache TTL in seconds (default: 3600)
 - `CACHE_ENABLED`: Whether disk caching is enabled (default: True). Set to `False` on read-only filesystems (e.g. Vercel) to skip all disk writes.
 - `CACHE_SEGMENTS`: Whether to cache HLS segment files (default: False)
+- `YUN_PATH_PREFIX`: BaiduYun storage root for HLS files (default: /apps/movies). Request paths under `/hls/{path}` map to `<YUN_PATH_PREFIX>/{path}`.
 - `LOCAL_PATH`: Local HLS file storage directory (default: ./local_hls) - if directory exists, local mode is automatically enabled
 - `REDIS_URL` / `REDIS_TOKEN`: Redis / Upstash (Vercel KV) REST endpoint for cross-instance fsid storage. Also accepts Vercel/Upstash injected names via aliases: `KV_REST_API_URL`/`KV_REST_API_TOKEN` and `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`. When set, fsid is stored in Redis regardless of `CACHE_ENABLED`.
 
@@ -119,6 +124,16 @@ Redis are unaffected.
 - 启动时会显示本地和网络访问地址
 - 其他机器可以通过服务器的IP地址直接访问web播放器
 
+### Upload CLI
+Upload local files/directories to BaiduYun (default target root is `YUN_PATH_PREFIX`):
+```bash
+python -m app.upload video.ts --retries 5
+python -m app.upload ./my_videos /apps/movies/my_videos -w 5
+python -m app.upload ./my_videos /apps/movies/my_videos --max-size 100MB --no-resume -o overwrite
+```
+Upload logic (including retry) lives in `BaiduYunService`; the CLI is a thin argparse shell
+(progress, resume, and parallel workers). Use `--no-delete-after-upload` to keep the local file.
+
 ## Project Structure
 
 ```
@@ -130,12 +145,14 @@ hls_yunpan/
 │   │   ├── hls.py          # HLS proxy route handlers
 │   │   └── health.py       # Health check endpoint
 │   ├── services/
-│   │   ├── baiduyun_service.py   # BaiduYun REST API client
+│   │   ├── baiduyun_service.py   # BaiduYun REST API client (list/download/stream/upload)
 │   │   ├── cache_service.py      # File content cache + fsid delegation
 │   │   ├── fsid_store.py         # FsidStore abstraction (Memory/Disk/Redis)
-│   │   └── hls_proxy_service.py  # Core HLS proxy logic
+│   │   ├── hls_proxy_service.py  # Thin HLS request pipeline
+│   │   └── segment_source.py     # SegmentSource seam (LocalSource / YunSource)
+│   ├── upload.py                 # Standalone CLI to upload files/dirs to BaiduYun
 │   └── utils/
-│       └── m3u8_parser.py  # HLS playlist parser
+│       └── m3u8_parser.py        # HLS playlist parse / rewrite / generate
 ├── config/settings.py      # Pydantic settings (single source)
 ├── web/index.html          # Static web player
 ├── vercel.json             # Vercel deployment config
@@ -144,9 +161,9 @@ hls_yunpan/
 ```
 
 ### BaiduYun Cloud Storage
-HLS files in BaiduYun should be organized under `/Apps/hls/`:
+HLS files in BaiduYun should be organized under `YUN_PATH_PREFIX` (default `/apps/movies`):
 ```
-/Apps/hls/
+/apps/movies/
 ├── video1/
 |   |-- playlist.m3u8
 │   ├── segment_0001
@@ -172,13 +189,13 @@ Both cloud and local files are accessed through the same proxy URLs:
 - `http://localhost:8000/hls/video1/playlist.m3u8`
 - `http://localhost:8000/hls/video1/segment_0001`
 
-**Priority**: Local files are automatically checked first when `LOCAL_PATH` directory exists.
+**Local is authoritative**: when `LOCAL_PATH` exists, local mode serves every file from disk and missing files return 404 — the cloud is never contacted.
 
 ## Important Implementation Details
 
 1. **Async Throughout**: The entire stack uses async/await for I/O operations to maximize performance with concurrent requests
 
-2. **URL Rewriting**: The HLS proxy service automatically rewrites URLs in m3u8 playlists to ensure correct chunk references through the proxy
+2. **URL Rewriting**: The M3U8 parser (`M3U8Parser.rewrite()`) rewrites playlist URLs so chunks resolve through the proxy. It handles relative URIs in bare lines and tag attributes, and drops `#EXT-X-KEY` (encryption-key) lines by default — pass `keep_key=True` to retain and rewrite them.
 
 3. **Streaming**: Large files are streamed to prevent timeouts and reduce memory usage
 
@@ -190,7 +207,7 @@ Both cloud and local files are accessed through the same proxy URLs:
 
 6. **Smart Local Mode**: Automatically detects and enables local mode when LOCAL_PATH directory exists:
    - No manual configuration needed
-   - Check local files first before hitting the cloud API
+   - Serves entirely from local disk when enabled — the cloud API is never called
    - Perfect for development, testing, or offline scenarios
    - Maintains the same API interface regardless of storage backend
 
@@ -216,3 +233,5 @@ cp segment_* ./my_videos/video1/
 ```
 
 If the directory doesn't exist, the service will automatically use cloud mode and display a warning. This allows for development without hitting BaiduYun API limits and provides offline capability for testing.
+
+When local mode is enabled, a missing file returns 404 rather than falling back to the cloud — so local mode is fully offline. To fall back to the cloud for missing files, remove `LOCAL_PATH` (or point it at a non-existent directory) to use cloud mode.

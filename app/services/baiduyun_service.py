@@ -1,6 +1,8 @@
 """百度网盘服务 - 负责与百度网盘API交互"""
+import asyncio
+import os
 import httpx
-from typing import Optional, List, Dict, AsyncIterator
+from typing import Optional, List, Dict, AsyncIterator, Callable, Awaitable
 import logging
 import traceback
 
@@ -11,6 +13,10 @@ logger = logging.getLogger(__name__)
 _API_TIMEOUT = 30.0
 # 文件下载流式超时 — 分片文件可能上百 MB, 留足时间
 _DOWNLOAD_STREAM_TIMEOUT = 300.0
+# 文件上传超时（单文件可能上百 MB）
+_UPLOAD_TIMEOUT = 600.0
+# 上传接口
+UPLOAD_URL = "https://d.pcs.baidu.com/rest/2.0/pcs/file"
 
 
 class BaiduYunService:
@@ -204,79 +210,97 @@ class BaiduYunService:
 
         return None
 
-    async def get_download_urls_by_fsids(self, fsids: List[int]) -> Dict[int, str]:
-        """
-        批量通过fsid获取下载链接
-
-        Args:
-            fsids: fsid列表
-
-        Returns:
-            {fsid: dlink} 映射
-        """
-        if not fsids:
-            return {}
-
-        url = "https://pan.baidu.com/rest/2.0/xpan/multimedia"
-        params = {
-            "method": "filemetas",
-            "fsids": str(fsids).replace(" ", ""),
-            "access_token": self.access_token
-        }
-        headers = self._get_headers()
-
-        response = await self.client.get(url, params=params, headers=headers)
-        response.raise_for_status()
-
-        data = response.json()
-
-        if data.get("errno") != 0:
-            logger.error(f"批量获取下载链接失败: {data.get('errmsg', 'Unknown error')}")
-            return {}
-
-        # 构建 {fsid: dlink} 映射
-        result = {}
-        for item in data.get("list", []):
-            fsid = item.get("fsid")
-            dlink = item.get("dlink")
-            if fsid and dlink:
-                result[fsid] = dlink
-
-        return result
-
-    async def get_file_info(self, file_path: str) -> dict:
-        """
-        获取文件信息
-
-        Args:
-            file_path: 网盘文件路径
-
-        Returns:
-            文件信息
-        """
-        try:
-            url = "https://pan.baidu.com/rest/2.0/xpan/file"
-            params = {
-                "method": "meta",
-                "path": file_path,
-                "access_token": self.access_token
-            }
-            headers = self._get_headers()
-
-            response = await self.client.get(url, params=params, headers=headers)
-            response.raise_for_status()
-
-            return response.json()
-        except Exception as e:
-            logger.error(f"获取文件信息失败 [{file_path}]: {e}")
-            raise
-
     def _get_headers(self) -> dict:
         """构建请求头"""
         headers = {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
         }
         return headers
+
+    # ---- 上传 ----
+
+    async def upload_file(
+        self,
+        local_path: str,
+        remote_path: str,
+        ondup: str = "overwrite",
+        max_retries: int = 5,
+    ) -> Dict:
+        """上传本地文件到网盘（带指数退避重试）。
+
+        Args:
+            local_path: 本地文件路径
+            remote_path: 网盘目标路径
+            ondup: 同名处理 (fail / overwrite / newcopy)
+            max_retries: 最大重试次数，0 表示不重试
+        """
+        filename = os.path.basename(local_path)
+
+        async def _attempt() -> Dict:
+            with open(local_path, 'rb') as fh:
+                return await self._upload_request(fh, filename, remote_path, ondup)
+
+        return await self._upload_with_retry(_attempt, name=filename, max_retries=max_retries)
+
+    async def upload_bytes(
+        self,
+        data: bytes,
+        filename: str,
+        remote_path: str,
+        ondup: str = "overwrite",
+        max_retries: int = 5,
+    ) -> Dict:
+        """上传内存中的字节流到网盘（带重试）。"""
+        async def _attempt() -> Dict:
+            return await self._upload_request(data, filename, remote_path, ondup)
+
+        return await self._upload_with_retry(_attempt, name=filename, max_retries=max_retries)
+
+    async def _upload_request(self, file_obj, filename: str, remote_path: str, ondup: str) -> Dict:
+        """执行一次上传请求并解码 errno，失败抛异常。"""
+        response = await self.client.post(
+            UPLOAD_URL,
+            params={
+                "method": "upload",
+                "access_token": self.access_token,
+                "path": remote_path,
+                "ondup": ondup,
+                "rtype": 3,
+            },
+            files={"file": (filename, file_obj, "application/octet-stream")},
+            timeout=httpx.Timeout(_UPLOAD_TIMEOUT, connect=_API_TIMEOUT),
+        )
+        if response.status_code != 200:
+            raise RuntimeError(f"HTTP error {response.status_code}: {response.text}")
+
+        result: Dict = response.json()
+        errno = result.get("errno")
+        if errno is not None and errno != 0:
+            raise RuntimeError(f"API errno={errno}: {result.get('errmsg', 'unknown error')}")
+        return result
+
+    async def _upload_with_retry(self, attempt: Callable[[], Awaitable[Dict]], name: str, max_retries: int) -> Dict:
+        """带指数退避重试执行上传。
+
+        Retry delays: 1 s, 2 s, 4 s, 8 s, ...
+        """
+        last_error = None
+        for i in range(max_retries + 1):
+            if i > 0:
+                delay = 2 ** (i - 1)
+                logger.info(f"[retry {i}/{max_retries}] {name} (wait {delay}s)")
+                await asyncio.sleep(delay)
+            try:
+                return await attempt()
+            except (httpx.HTTPStatusError, httpx.RequestError, RuntimeError, OSError) as e:
+                last_error = e
+        raise RuntimeError(f"Failed after {max_retries} retries: {last_error}") from last_error
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        await self.close()
 
     async def close(self):
         """关闭客户端"""

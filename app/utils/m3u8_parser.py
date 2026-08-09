@@ -30,6 +30,9 @@ class M3U8Playlist:
 class M3U8Parser:
     """M3U8解析器"""
 
+    _URI_ATTR_RE = re.compile(r'URI="([^"]*)"')
+    _ABSOLUTE_RE = re.compile(r'^(https?://|//)')
+
     def __init__(self):
         self.segment_pattern = re.compile(r'#EXTINF:([\d.]+)(?:,(.*))?\n(.+)')
         self.byte_range_pattern = re.compile(r'#EXT-X-BYTERANGE:(\d+)@(\d+)')
@@ -137,3 +140,48 @@ class M3U8Parser:
         lines.append('#EXT-X-ENDLIST')
 
         return '\n'.join(lines)
+
+    def rewrite(self, content: bytes, base_url: str = "", keep_key: bool = False) -> bytes:
+        """重写播放列表中的相对 URI，使其指向代理路径。
+
+        同时处理两类行：
+        - 裸 URI 行（分片 / 变体播放列表）：相对路径拼上 base_url 的目录。
+        - 标签属性中的 URI（#EXT-X-MAP / #EXT-X-MEDIA 等）。
+
+        默认移除 #EXT-X-KEY（加密密钥）标签；设置 keep_key=True 时保留并重写其 URI。
+        绝对地址（http(s):// 或 //）保持不变。解析失败时原样返回。
+        """
+        try:
+            text = content.decode('utf-8')
+        except (UnicodeDecodeError, AttributeError):
+            return content
+
+        base_dir = '/'.join(base_url.split('/')[:-1])
+
+        lines = []
+        for line in text.split('\n'):
+            stripped = line.strip()
+            if not stripped:
+                lines.append(line)
+            elif stripped.startswith('#'):
+                if not keep_key and stripped.startswith('#EXT-X-KEY:'):
+                    continue  # 默认去掉加密密钥标签
+                lines.append(self._rewrite_attr_uris(line, base_dir))
+            else:
+                lines.append(self._join_base(base_dir, line))
+
+        return '\n'.join(lines).encode('utf-8')
+
+    @classmethod
+    def _join_base(cls, base_dir: str, uri: str) -> str:
+        """相对 URI 拼上 base_dir；绝对地址原样返回。"""
+        if cls._ABSOLUTE_RE.match(uri):
+            return uri
+        return f"{base_dir}/{uri}".replace('//', '/')
+
+    @classmethod
+    def _rewrite_attr_uris(cls, line: str, base_dir: str) -> str:
+        """重写标签属性中的 URI，例如 #EXT-X-KEY:URI=\"key.key\"。"""
+        def _repl(match):
+            return f'URI="{cls._join_base(base_dir, match.group(1))}"'
+        return cls._URI_ATTR_RE.sub(_repl, line)

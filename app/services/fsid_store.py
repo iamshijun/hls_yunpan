@@ -43,10 +43,6 @@ class FsidStore(ABC):
         """批量写入 {file_path: fsid}"""
         ...
 
-    async def clear_dir(self, dir_path: str) -> None:
-        """清理某目录下的所有 fsid（默认无操作）"""
-        return
-
     async def close(self) -> None:
         """释放底层资源（默认无操作）"""
         return
@@ -76,11 +72,6 @@ class MemoryFsidStore(FsidStore):
         now = time.time()
         for fp, fsid in fsid_map.items():
             self._data[fp] = {"fsid": fsid, "timestamp": now}
-
-    async def clear_dir(self, dir_path: str) -> None:
-        prefix = dir_path.rstrip("/") + "/"
-        for fp in [k for k in self._data if k.startswith(prefix)]:
-            del self._data[fp]
 
 
 class DiskFsidStore(FsidStore):
@@ -151,16 +142,6 @@ class DiskFsidStore(FsidStore):
         for dir_path in touched:
             asyncio.create_task(self._save_dir(dir_path))
 
-    async def clear_dir(self, dir_path: str) -> None:
-        self._mem.pop(dir_path, None)
-        path = self._dir_cache_path(dir_path)
-        if path.exists():
-            try:
-                path.unlink()
-                logger.info(f"已清理目录fsid缓存: {dir_path}")
-            except Exception as e:
-                logger.error(f"清理目录fsid缓存失败 [{dir_path}]: {e}")
-
 
 class RedisFsidStore(FsidStore):
     """Redis / Upstash（Vercel KV）fsid 存储
@@ -229,13 +210,6 @@ class RedisFsidStore(FsidStore):
                 logger.error(f"Redis 批量写入 fsid 失败 [{dir_path}]: {e}")
 
         await self._l1.set_many(fsid_map)
-
-    async def clear_dir(self, dir_path: str) -> None:
-        try:
-            await self._redis.delete(self._dir_key(dir_path))
-        except Exception as e:
-            logger.error(f"Redis 清理目录 fsid 失败 [{dir_path}]: {e}")
-        await self._l1.clear_dir(dir_path)
 
     async def close(self) -> None:
         close = getattr(self._redis, "close", None)
