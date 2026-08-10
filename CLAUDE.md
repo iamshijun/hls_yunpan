@@ -231,7 +231,3 @@ cp segment_* ./my_videos/video1/
 # Start the service - local mode is automatically detected!
 ./start.sh
 ```
-
-If the directory doesn't exist, the service will automatically use cloud mode and display a warning. This allows for development without hitting BaiduYun API limits and provides offline capability for testing.
-
-When local mode is enabled, a missing file returns 404 rather than falling back to the cloud — so local mode is fully offline. To fall back to the cloud for missing files, remove `LOCAL_PATH` (or point it at a non-existent directory) to use cloud mode.

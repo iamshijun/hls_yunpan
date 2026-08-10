@@ -101,6 +101,41 @@ class BaiduYunService:
             traceback.print_exc()
             raise
 
+    async def search_file(self, key: str, dir_path: str = "/") -> List[Dict]:
+        """在指定目录下搜索文件（百度网盘 search API）。
+
+        Args:
+            key: 搜索关键词（通常是文件名，如 "metadata.txt"）
+            dir_path: 搜索的起始目录
+
+        Returns:
+            命中文件列表（与 list 接口相同的 list 元素结构），失败返回空列表。
+        """
+        try:
+            url = "https://pan.baidu.com/rest/2.0/xpan/file"
+            params = {
+                "method": "search",
+                "access_token": self.access_token,
+                "key": key,
+                "dir": dir_path,
+                "recursion": 1,  # 搜子目录，避免用户路径带子目录
+                "page": 1,
+                "size": 50,
+            }
+            headers = self._get_headers()
+            response = await self.client.get(url, params=params, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            if data.get("errno") != 0:
+                logger.warning(
+                    f"search failed: {data.get('errmsg')} (errno={data.get('errno')})"
+                )
+                return []
+            return data.get("list", [])
+        except Exception as e:
+            logger.error(f"搜索文件失败 [{dir_path} / {key}]: {e}")
+            return []
+
     async def download_file(self, file_path: str, fsid: Optional[int] = None) -> bytes:
         """
         下载文件

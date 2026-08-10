@@ -13,9 +13,24 @@ from app.services.baiduyun_service import BaiduYunService
 from app.services.cache_service import CacheService
 from app.services.hls_proxy_service import HLSProxyService, HLSProxyError
 from app.services.fsid_store import create_fsid_store
-from app.routes import health, hls
+from app.services.metadata_service import MetadataService
+from app.routes import admin, health, hls, metadata
 
 logger = logging.getLogger(__name__)
+
+# httpx / httpcore 对应的 logger 名称
+_HTTPX_LOGGERS = ("httpx", "httpcore")
+
+
+def _configure_httpx_log(enabled: bool) -> None:
+    """设置 httpx / httpcore 的日志级别。
+
+    enabled=False（默认）：静默 httpx 请求日志，不打印请求URL。
+    enabled=True：让 httpx/internal debug 日志正常输出（受 root logger 级别约束）。
+    """
+    level = logging.DEBUG if enabled else logging.WARNING
+    for name in _HTTPX_LOGGERS:
+        logging.getLogger(name).setLevel(level)
 
 
 def create_app(
@@ -38,6 +53,9 @@ def create_app(
         level=logging.INFO if not settings.debug else logging.DEBUG,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
+
+    # 显式控制 httpx / httpcore 的日志级别，避免污染日志内容
+    _configure_httpx_log(settings.httpx_log)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -64,8 +82,14 @@ def create_app(
             cache_segments=settings.cache_segments,
             local_path=settings.local_path
         )
-        # 将服务注入 app.state，路由通过 Depends(get_hls_service) 获取
+        metadata_svc = MetadataService(
+            yun_service=yun_svc,
+            yun_path_prefix=settings.yun_path_prefix,
+            local_path=settings.local_path,
+        )
+        # 将服务注入 app.state，路由通过 Depends(get_*_service) 获取
         app.state.hls_proxy_service = hls_svc
+        app.state.metadata_service = metadata_svc
         logger.info("服务初始化完成")
         yield
         await yun_svc.close()
@@ -107,8 +131,10 @@ def create_app(
         logger.warning("Web目录不存在，静态文件服务已禁用")
 
     # 路由
+    app.include_router(admin.router)
     app.include_router(health.router)
     app.include_router(hls.router)
+    app.include_router(metadata.router)
 
     return app
 

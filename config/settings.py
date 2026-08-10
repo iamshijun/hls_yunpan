@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     # HLS配置
     yun_path_prefix: str = "/apps/movies"  # 网盘存储根路径（HLS 文件所在目录）
 
+    # httpx 请求日志控制（默认关闭，避免打印请求URL等敏感信息）
+    httpx_log: bool = False
+
     # 本地模式配置
     local_path: str = "./local_hls"  # 本地HLS文件存储目录，如果存在则自动启用本地模式
 

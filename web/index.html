@@ -204,6 +204,89 @@
         .help-section li:last-child {
             border-bottom: none;
         }
+
+        /* ---- metadata 面板 ---- */
+        .metadata-panel {
+            background: rgba(255, 255, 255, 0.06);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 20px;
+            margin-top: 20px;
+            display: none;
+            gap: 20px;
+            align-items: flex-start;
+        }
+
+        .metadata-panel.active {
+            display: flex;
+        }
+
+        .metadata-cover {
+            flex: 0 0 180px;
+            width: 180px;
+            aspect-ratio: 2 / 3;
+            object-fit: cover;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .metadata-body {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .metadata-body h2 {
+            font-size: 1.3rem;
+            margin-bottom: 14px;
+            color: #fff;
+            word-break: break-word;
+        }
+
+        .meta-row {
+            display: flex;
+            gap: 10px;
+            padding: 6px 0;
+            align-items: baseline;
+        }
+
+        .meta-key {
+            flex: 0 0 56px;
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 0.9rem;
+        }
+
+        .meta-value {
+            flex: 1;
+            color: #fff;
+            word-break: break-word;
+        }
+
+        .tag-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .tag-chip {
+            display: inline-block;
+            padding: 3px 10px;
+            background: rgba(0, 210, 255, 0.18);
+            color: #00d2ff;
+            border-radius: 12px;
+            font-size: 0.85rem;
+        }
+
+        @media (max-width: 600px) {
+            .metadata-panel {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .metadata-cover {
+                width: 100%;
+                max-width: 220px;
+                align-self: center;
+            }
+        }
     </style>
 </head>
 <body>
@@ -236,6 +319,19 @@
             </div>
         </div>
 
+        <div class="metadata-panel" id="metadataPanel">
+            <img class="metadata-cover" id="metaCover" alt="封面" onerror="this.style.display='none'">
+            <div class="metadata-body">
+                <h2 id="metaTitle"></h2>
+                <div class="meta-row"><span class="meta-key">番号</span><span class="meta-value" id="metaFanCode"></span></div>
+                <div class="meta-row"><span class="meta-key">演员</span><span class="meta-value" id="metaCast"></span></div>
+                <div class="meta-row"><span class="meta-key">系列</span><span class="meta-value" id="metaSeries"></span></div>
+                <div class="meta-row"><span class="meta-key">制作商</span><span class="meta-value" id="metaMaker"></span></div>
+                <div class="meta-row"><span class="meta-key">类型</span><span class="meta-value" id="metaGenre"></span></div>
+                <div class="meta-row"><span class="meta-key">标签</span><span class="meta-value tag-chips" id="metaTags"></span></div>
+            </div>
+        </div>
+
         <div class="error-message" id="errorMessage"></div>
 
         <div class="help-section">
@@ -256,6 +352,16 @@
         const statusEl = document.getElementById('status');
         const errorMessage = document.getElementById('errorMessage');
         const currentPathEl = document.getElementById('currentPath');
+
+        const metadataPanel = document.getElementById('metadataPanel');
+        const metaCover = document.getElementById('metaCover');
+        const metaTitle = document.getElementById('metaTitle');
+        const metaFanCode = document.getElementById('metaFanCode');
+        const metaCast = document.getElementById('metaCast');
+        const metaSeries = document.getElementById('metaSeries');
+        const metaMaker = document.getElementById('metaMaker');
+        const metaGenre = document.getElementById('metaGenre');
+        const metaTags = document.getElementById('metaTags');
 
         let hls = null;
 
@@ -309,6 +415,9 @@
             playerSection.classList.add('active');
             currentPathEl.textContent = `当前播放: /apps/movies/${cleanPath}/playlist.m3u8`;
             showStatus('loading', '加载中...');
+
+            // 并行拉取元数据（不影响播放）
+            fetchMetadata(baseUrl, cleanPath);
 
             if (hls) {
                 hls.destroy();
@@ -370,6 +479,94 @@
 
             } else {
                 showError('您的浏览器不支持HLS播放');
+            }
+        }
+
+        // ---- 元数据 ----
+
+        function hideMetadata() {
+            metadataPanel.classList.remove('active');
+        }
+
+        function setMetaText(el, value) {
+            // 字符串/数字都按文本；空值清空
+            el.textContent = (value == null) ? '' : String(value);
+        }
+
+        function renderMetadata(data) {
+            // 标题
+            if (data.title) {
+                setMetaText(metaTitle, data.title);
+                metaTitle.style.display = '';
+            } else {
+                metaTitle.style.display = 'none';
+            }
+
+            // 番号 / 系列 / 制作商
+            setMetaText(metaFanCode, data.fan_code || '');
+            setMetaText(metaSeries, data.series || '');
+            setMetaText(metaMaker, data.maker || '');
+
+            // 演员（数组 → 用「、」拼接）
+            const cast = data.cast;
+            if (Array.isArray(cast) && cast.length) {
+                setMetaText(metaCast, cast.join('、'));
+            } else if (typeof cast === 'string' && cast) {
+                setMetaText(metaCast, cast);
+            } else {
+                setMetaText(metaCast, '');
+            }
+
+            // 类型（数组 → 用「、」拼接）
+            const genre = data.genre;
+            if (Array.isArray(genre) && genre.length) {
+                setMetaText(metaGenre, genre.join('、'));
+            } else if (typeof genre === 'string' && genre) {
+                setMetaText(metaGenre, genre);
+            } else {
+                setMetaText(metaGenre, '');
+            }
+
+            // 标签：渲染为 chips
+            const tags = data.tags;
+            metaTags.innerHTML = '';
+            if (Array.isArray(tags) && tags.length) {
+                tags.forEach(t => {
+                    const chip = document.createElement('span');
+                    chip.className = 'tag-chip';
+                    chip.textContent = t;
+                    metaTags.appendChild(chip);
+                });
+            }
+
+            // 封面：有 url 才设 src，缺省隐藏
+            if (data.cover) {
+                metaCover.src = data.cover;
+                metaCover.style.display = '';
+            } else {
+                metaCover.removeAttribute('src');
+                metaCover.style.display = 'none';
+            }
+
+            metadataPanel.classList.add('active');
+        }
+
+        async function fetchMetadata(baseUrl, cleanPath) {
+            hideMetadata();
+            try {
+                const resp = await fetch(`${baseUrl}/metadata/${cleanPath}`);
+                if (resp.status === 404) return; // 没有 metadata 是合法情况
+                if (!resp.ok) {
+                    console.warn('metadata 请求失败:', resp.status);
+                    return;
+                }
+                const data = await resp.json();
+                if (data && typeof data === 'object') {
+                    renderMetadata(data);
+                }
+            } catch (e) {
+                // 静默不报错，不影响视频播放
+                console.debug('metadata 拉取异常:', e);
             }
         }
 

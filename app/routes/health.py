@@ -21,6 +21,7 @@ async def root():
         "version": "1.0.0",
         "endpoints": {
             "health": "/health",
-            "hls_proxy": "/hls/{path:path}"
+            "hls_proxy": "/hls/{path:path}",
+            "httpx_log": "/admin/httpx-log",
         }
     }
