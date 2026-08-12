@@ -3,9 +3,10 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
+import httpx
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from config.settings import settings
@@ -14,7 +15,7 @@ from app.services.cache_service import CacheService
 from app.services.hls_proxy_service import HLSProxyService, HLSProxyError
 from app.services.fsid_store import create_fsid_store
 from app.services.metadata_service import MetadataService
-from app.routes import admin, health, hls, metadata
+from app.routes import admin, catalog, health, hls, metadata
 
 logger = logging.getLogger(__name__)
 
@@ -87,13 +88,17 @@ def create_app(
             yun_path_prefix=settings.yun_path_prefix,
             local_path=settings.local_path,
         )
+        # 共享 httpx 客户端（给目录 API 代理等用），超时走 settings.catalog_timeout
+        http_client = httpx.AsyncClient(timeout=settings.catalog_timeout, follow_redirects=True)
         # 将服务注入 app.state，路由通过 Depends(get_*_service) 获取
         app.state.hls_proxy_service = hls_svc
         app.state.metadata_service = metadata_svc
+        app.state.http_client = http_client
         logger.info("服务初始化完成")
         yield
         await yun_svc.close()
         await cache_svc.close()
+        await http_client.aclose()
         logger.info("服务已关闭")
 
     app = FastAPI(
@@ -118,20 +123,26 @@ def create_app(
         allow_headers=["*"],
     )
 
-    # 静态文件
+    # 静态文件 — html=True 让 /web/ 自动服务 index.html
     effective_static_dir = static_dir or (Path(__file__).parent.parent / "web")
     if effective_static_dir.exists():
         app.mount(
             "/web",
-            StaticFiles(directory=str(effective_static_dir)),
+            StaticFiles(directory=str(effective_static_dir), html=True),
             name="web",
         )
         logger.info(f"静态文件已挂载到 /web: {effective_static_dir}")
     else:
         logger.warning("Web目录不存在，静态文件服务已禁用")
 
+    # 根路径 → /web/（影库首页）
+    @app.get("/", include_in_schema=False)
+    async def root_redirect():
+        return RedirectResponse(url="/web/")
+
     # 路由
     app.include_router(admin.router)
+    app.include_router(catalog.router)
     app.include_router(health.router)
     app.include_router(hls.router)
     app.include_router(metadata.router)

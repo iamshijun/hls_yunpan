@@ -3,65 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>网盘HLS播放器</title>
-    <link rel="stylesheet" href="css/style.css">
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <title>影库</title>
+    <link rel="stylesheet" href="css/library.css">
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>网盘HLS播放器</h1>
-            <p>基于百度网盘的HLS媒体流播放服务</p>
+    <div class="lib-top">
+        <div class="lib-brand">影<span>库</span></div>
+        <div class="lib-search-wrap">
+            <span class="lib-search-icon">⌕</span>
+            <input id="libSearch" class="lib-search" type="search" placeholder="搜索番号 / 标题 / 演员（前端过滤）">
         </div>
-
-        <div class="input-section">
-            <div class="input-group">
-                <input type="text" id="mediaPath" placeholder="输入媒体目录路径，例如: hdsn-006 或 movies/我的视频">
-                <button class="btn btn-primary" onclick="loadVideo()">播放</button>
-            </div>
-            <p class="example-text">
-                提示：输入网盘目录路径，系统会自动加载同名的 .m3u8 文件<br>
-                例如：网盘路径 /apps/movies/video1/ → 输入 video1
-            </p>
-        </div>
-
-        <div class="player-section" id="playerSection">
-            <video id="video" controls></video>
-            <div class="player-info">
-                <div>
-                    <span id="currentPath">当前播放: </span>
-                </div>
-                <div>
-                    <span class="status" id="status">准备就绪</span>
-                </div>
-            </div>
-        </div>
-
-        <div class="metadata-panel" id="metadataPanel">
-            <img class="metadata-cover" id="metaCover" alt="封面" onerror="this.style.display='none'">
-            <div class="metadata-body">
-                <h2 id="metaTitle"></h2>
-                <div class="meta-row"><span class="meta-key">番号</span><span class="meta-value" id="metaFanCode"></span></div>
-                <div class="meta-row"><span class="meta-key">演员</span><span class="meta-value" id="metaCast"></span></div>
-                <div class="meta-row"><span class="meta-key">系列</span><span class="meta-value" id="metaSeries"></span></div>
-                <div class="meta-row"><span class="meta-key">制作商</span><span class="meta-value" id="metaMaker"></span></div>
-                <div class="meta-row"><span class="meta-key">类型</span><span class="meta-value" id="metaGenre"></span></div>
-                <div class="meta-row"><span class="meta-key">标签</span><span class="meta-value tag-chips" id="metaTags"></span></div>
-            </div>
-        </div>
-
-        <div class="error-message" id="errorMessage"></div>
-
-        <div class="help-section">
-            <h3>使用说明</h3>
-            <ul>
-                <li>• 网盘文件结构：/apps/movies/目录名/playlist.m3u8 + 分片文件</li>
-                <li>• 输入目录名（如 hdsn-006），自动加载 playlist.m3u8</li>
-                <li>• 支持子目录：如 movies/我的视频</li>
-            </ul>
-        </div>
+        <div id="libCount" class="lib-count"></div>
     </div>
-
-    <script src="js/main.js"></script>
+    <div class="lib-layout">
+        <aside class="lib-side">
+            <div id="libChips" class="lib-chips"></div>
+        </aside>
+        <main class="lib-main">
+            <div id="libGrid" class="lib-grid"></div>
+            <div id="libMore" class="lib-more"></div>
+        </main>
+    </div>
+    <script src="js/library.js"></script>
 </body>
 </html>

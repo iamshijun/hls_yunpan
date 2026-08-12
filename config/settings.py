@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     # 本地模式配置
     local_path: str = "./local_hls"  # 本地HLS文件存储目录，如果存在则自动启用本地模式
 
+    # 目录 API 代理配置（影片库首页拉取列表/详情的外部服务）
+    # base 必须来自配置；客户端不能覆盖，避免变成开放代理。
+    catalog_api_base: str = "http://127.0.0.1:8010"
+    catalog_api_token: Optional[str] = None
+    catalog_timeout: float = 10.0
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

@@ -35,13 +35,17 @@ hls_yunpan/
 ├── app/
 │   ├── main.py                # create_app() 工厂 + 本地 uvicorn 启动
 │   ├── routes/
-│   │   ├── hls.py             # HLS代理路由
-│   │   └── health.py          # 健康检查
+│   │   ├── admin.py           # 管理路由
+│   │   ├── catalog.py         # 目录 API 代理（生产，/api/catalog/*）
+│   │   ├── health.py          # 健康检查
+│   │   ├── hls.py             # HLS 代理路由
+│   │   └── metadata.py        # metadata.txt 读取路由
 │   ├── services/
 │   │   ├── baiduyun_service.py    # 百度网盘服务（列表/下载/流式/上传）
 │   │   ├── cache_service.py       # 文件内容缓存 + fsid 委托
 │   │   ├── fsid_store.py          # fsid 存储抽象 (内存/磁盘/Redis)
 │   │   ├── hls_proxy_service.py   # HLS代理服务（请求流水线）
+│   │   ├── metadata_service.py    # metadata.txt 解析
 │   │   └── segment_source.py      # 内容源抽象 (本地/网盘)
 │   ├── upload.py                  # 上传 CLI（委托 BaiduYunService）
 │   └── utils/
@@ -49,7 +53,20 @@ hls_yunpan/
 ├── config/
 │   └── settings.py            # 配置管理 (唯一配置源)
 ├── web/
-│   └── index.html             # Web 播放器
+│   ├── index.html             # 影库首页（变体 A）
+│   ├── play.html              # 播放页（支持带 inline 详情 + metadata 回退）
+│   ├── css/
+│   │   ├── library.css        # 影库首页样式
+│   │   └── play.css           # 播放页样式
+│   └── js/
+│       ├── library.js         # 影库首页逻辑
+│       └── play.js            # 播放页逻辑
+├── prototype/                 # 一次性原型，参考用，不要在生产用
+│   ├── README.md
+│   ├── home.html
+│   ├── home.css
+│   ├── home.js
+│   └── catalog_proxy.py
 ├── vercel.json                # Vercel 部署配置
 ├── package.json               # Vercel CLI 脚本
 ├── requirements.txt           # 依赖包
@@ -93,17 +110,49 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 服务启动后，通过以下URL访问：
 
+- **影库首页**: `http://localhost:8000/`（重定向到 `/web/`） 或 `http://localhost:8000/web/`
+- **播放页**: `http://localhost:8000/web/play.html?path=<fan_code>`
 - **健康检查**: `http://localhost:8000/health`
 - **HLS代理**: `http://localhost:8000/hls/{网盘文件路径}`
+- **目录 API 代理**: `http://localhost:8000/api/catalog/*`（前端 → 上游目录 API）
 
 **示例**：
 ```bash
+# 影库首页
+http://localhost:8000/
+
 # 播放网盘中的视频
 http://localhost:8000/hls/video.m3u8
 
 # 分片文件会自动代理
 http://localhost:8000/hls/segment_0001.ts
 ```
+
+## 影库 / 目录 API
+
+`web/index.html` 是影库首页（变体 A：封面墙 + 顶部搜索 + 左栏 facets）。
+页面通过 `/api/catalog/*` 拉取数据；该路由是后端代理，转发到由
+`CATALOG_API_BASE` 配置的上游目录 API（默认 `http://127.0.0.1:8010`，
+对应本地 demo 目录 API）。
+
+- `/api/catalog/api/movies?page=&size=&labels=&q=` — 列表
+- `/api/catalog/api/movies/{fan_code}` — 单部详情
+
+上游 base 走 `settings.catalog_api_base`，不接受客户端覆盖。
+如果设置了 `CATALOG_API_TOKEN`，转发时自动加 `Authorization: Bearer`。
+请求上游的超时走 `settings.catalog_timeout`。
+
+点击首页任一影片会跳到 `web/play.html?path=...`，把库里的详情（title /
+cover / cast / tags / year / duration / description）通过 URL 参数带过去；
+播放页直接渲染，不用等后端返回。只有 `?path=xxx` 这种老链接才会去
+拉 `GET /metadata/{path}` 补 metadata。
+
+外部 demo 目录 API 不支持 `q`（关键词搜索），所以搜索暂时退化为
+「已加载数据的前端过滤」——搜索框占位符里也明示了这一点，`labels`
+走服务端筛选。
+
+> `prototype/` 目录里是早期的对比原型（3 个变体 / 旧版代理），保留作
+> 参考，不要在生产用。详见 `prototype/README.md`。
 
 ## 网盘文件组织
 
@@ -134,6 +183,9 @@ http://localhost:8000/hls/segment_0001.ts
 | `YUN_PATH_PREFIX` | 网盘 HLS 存储根路径（`/hls/{path}` 映射到 `<YUN_PATH_PREFIX>/{path}`） | `/apps/movies` |
 | `LOCAL_PATH` | 本地 HLS 文件目录（存在则自动启用本地模式） | `./local_hls` |
 | `REDIS_URL` / `REDIS_TOKEN` | Redis / Upstash (Vercel KV) 地址，用于跨实例存储 fsid | - |
+| `CATALOG_API_BASE` | 影库首页代理的上游目录 API base | `http://127.0.0.1:8010` |
+| `CATALOG_API_TOKEN` | 转发到上游时透传的 `Authorization: Bearer` token | - |
+| `CATALOG_TIMEOUT` | 请求上游目录 API 的超时（秒） | `10.0` |
 
 > `REDIS_URL` / `REDIS_TOKEN` 同时兼容 Vercel/Upstash 注入的变量名：
 > `KV_REST_API_URL`/`KV_REST_API_TOKEN` 与 `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`。
