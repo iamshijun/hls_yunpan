@@ -4,6 +4,7 @@
  */
 
 const PROXY = '/api/catalog';
+const VIEW_KEY = 'library_view_mode';
 
 const state = {
     page: 1,
@@ -14,6 +15,7 @@ const state = {
     total: 0,
     loading: false,
     error: null,
+    viewMode: 'card',
 };
 
 // --- 同步 URL：q / labels 写回；page 暂不同步（避免历史栈污染） ---
@@ -78,7 +80,7 @@ async function load({ append = false } = {}) {
         state.total = json.total ?? state.movies.length;
         state.loading = false;  // 渲染前清掉 loading，否则 renderError() 会一直显示"加载中…"
         if (append) {
-            for (const m of state.movies.slice(beforeCount)) grid.appendChild(makeCard(m));
+            for (const m of state.movies.slice(beforeCount)) grid.appendChild(makeItem(m));
             count.textContent = `共 ${state.total} 部 · 已加载 ${state.movies.length}`;
             renderMore();
         } else {
@@ -157,6 +159,8 @@ const chips = document.getElementById('libChips');
 const count = document.getElementById('libCount');
 const more = document.getElementById('libMore');
 const search = document.getElementById('libSearch');
+const btnList = document.getElementById('btnList');
+const btnCard = document.getElementById('btnCard');
 
 function statusLine() {
     if (state.loading) return '加载中…';
@@ -168,6 +172,7 @@ function renderError() {
     const msg = statusLine();
     if (!msg) return false;
     grid.innerHTML = '';
+    grid.className = state.viewMode === 'list' ? 'lib-list' : 'lib-grid';
     more.innerHTML = '';
     const box = el('div', 'state-msg');
     box.innerHTML = state.error
@@ -238,6 +243,35 @@ function makeCard(m) {
     return card;
 }
 
+function makeListRow(m) {
+    const row = el('div', 'lib-row');
+
+    const line1 = el('div', 'lib-row-line1');
+    line1.appendChild(el('span', 'lib-row-code', m.fan_code));
+    line1.appendChild(el('span', 'lib-row-title', m.title || '(无标题)'));
+    const yearText = (m.year == null || m.year === '') ? '—' : String(m.year);
+    line1.appendChild(el('span', 'lib-row-year', yearText));
+    row.appendChild(line1);
+
+    const line2 = el('div', 'lib-row-line2');
+    const cast = el('span');
+    cast.appendChild(el('b', null, '演员'));
+    cast.appendChild(document.createTextNode(names(m.cast) || '—'));
+    line2.appendChild(cast);
+    const tags = el('span');
+    tags.appendChild(el('b', null, '标签'));
+    tags.appendChild(document.createTextNode(names(m.labels) || '—'));
+    line2.appendChild(tags);
+    row.appendChild(line2);
+
+    row.onclick = () => { open_page(playHref(m.fan_code, m)); };
+    return row;
+}
+
+function makeItem(m) {
+    return state.viewMode === 'list' ? makeListRow(m) : makeCard(m);
+}
+
 function renderMore() {
     more.innerHTML = '';
     if (state.movies.length < state.total) {
@@ -254,9 +288,10 @@ function renderMorePending() {
 
 function renderGrid() {
     grid.innerHTML = '';
+    grid.className = state.viewMode === 'list' ? 'lib-list' : 'lib-grid';
     more.innerHTML = '';
     if (renderError()) return;
-    for (const m of state.movies) grid.appendChild(makeCard(m));
+    for (const m of state.movies) grid.appendChild(makeItem(m));
     count.textContent = `共 ${state.total} 部 · 已加载 ${state.movies.length}`;
     renderMore();
 }
@@ -277,6 +312,22 @@ function render() {
     renderGrid();
 }
 
+function updateToggle() {
+    const isList = state.viewMode === 'list';
+    btnList.classList.toggle('on', isList);
+    btnCard.classList.toggle('on', !isList);
+}
+
+function setViewMode(mode) {
+    if (state.viewMode === mode) return;
+    state.viewMode = mode;
+    try { localStorage.setItem(VIEW_KEY, mode); } catch (e) {}
+    updateToggle();
+    render();
+}
+btnList.onclick = () => setViewMode('list');
+btnCard.onclick = () => setViewMode('card');
+
 // --- 启动 ---
 const qs = new URLSearchParams(location.search);
 state.q = qs.get('q') || '';
@@ -292,6 +343,10 @@ search.addEventListener('input', () => {
         load();
     }, SEARCH_DEBOUNCE_MS);
 });
+
+const savedView = localStorage.getItem(VIEW_KEY);
+if (savedView === 'list' || savedView === 'card') state.viewMode = savedView;
+updateToggle();
 
 render();
 load();

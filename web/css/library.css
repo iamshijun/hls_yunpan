@@ -49,6 +49,17 @@ body {
 }
 .lib-count { color: var(--text-dim); font-size: 12px; margin-left: auto; white-space: nowrap; }
 
+/* 顶栏右侧「列表 / 卡片」切换 */
+.view-toggle { display: flex; align-items: center; gap: 4px; background: #0c0e12; border: 1px solid var(--line); border-radius: 8px; padding: 4px; }
+.view-toggle button {
+    display: flex; align-items: center; justify-content: center;
+    width: 34px; height: 30px; border: none; border-radius: 6px; background: transparent;
+    color: var(--text-dim); cursor: pointer; transition: background .15s, color .15s;
+}
+.view-toggle button svg { width: 16px; height: 16px; }
+.view-toggle button:hover { color: var(--text); }
+.view-toggle button.on { background: #2a2f3a; color: #fff; }
+
 /* 主体布局 */
 .lib-layout {
     display: grid; grid-template-columns: 232px minmax(0, 1fr);
@@ -118,6 +129,17 @@ body {
 }
 .lib-cast-chip:hover { background: #2a303b; color: #fff; }
 .lib-cast-chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* 列表模式（纯文本两行主次） */
+.lib-list { padding: 14px 28px 90px; }
+.lib-row { padding: 11px 14px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.lib-row:hover { background: #161a21; }
+.lib-row-line1 { display: flex; align-items: baseline; gap: 12px; }
+.lib-row-code { color: var(--accent-2); font-family: ui-monospace, Menlo, monospace; font-size: 12px; flex: 0 0 auto; }
+.lib-row-title { color: var(--text); font-weight: 600; font-size: 14px; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-row-year { color: var(--text-dim); font-size: 12px; margin-left: auto; flex: 0 0 auto; }
+.lib-row-line2 { display: flex; gap: 16px; margin-top: 5px; font-size: 12px; color: var(--text-dim); }
+.lib-row-line2 b { color: #6f7a8c; font-weight: 500; margin-right: 4px; }
 
 .lib-more { padding: 0 28px 100px; text-align: center; }
 .lib-more .btn {
