@@ -20,6 +20,7 @@ ENV/
 # 缓存
 cache/
 *.log
+server.pid
 
 # macOS
 .DS_Store

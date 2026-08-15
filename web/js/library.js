@@ -203,7 +203,7 @@ function renderChips() {
             chips.appendChild(chip);
         }
     };
-    section('演员', 'cast');
+    section('演员', 'casts');
     section('标签', 'labels');
 }
 
