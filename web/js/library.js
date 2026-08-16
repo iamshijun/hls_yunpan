@@ -10,7 +10,8 @@ const state = {
     page: 1,
     size: 60,
     q: '',
-    labels: [],            // 服务端筛选用
+    casts: [],            // 服务端筛选用
+    actorStats: [],       // /api/actors/stats 返回的演员全局统计（侧栏用）
     movies: [],
     total: 0,
     loading: false,
@@ -18,11 +19,11 @@ const state = {
     viewMode: 'card',
 };
 
-// --- 同步 URL：q / labels 写回；page 暂不同步（避免历史栈污染） ---
+// --- 同步 URL：q / casts 写回；page 暂不同步（避免历史栈污染） ---
 function syncUrl() {
     const p = new URLSearchParams();
     if (state.q) p.set('q', state.q);
-    if (state.labels.length) p.set('labels', state.labels.join(','));
+    if (state.casts.length) p.set('cast', state.casts.join(','));
     const qs = p.toString();
     history.replaceState(null, '', qs ? `${location.pathname}?${qs}` : location.pathname);
 }
@@ -41,11 +42,24 @@ function apiUrl(path, params = {}) {
 
 async function listMovies() {
     const url = apiUrl('/api/movies', {
-        page: state.page, size: state.size, labels: state.labels, q: state.q,
+        page: state.page, size: state.size, cast: state.casts, q: state.q,
     });
     const resp = await fetch(url);
     if (!resp.ok) throw new Error(`目录 API ${resp.status}`);
     return resp.json();
+}
+
+/** 拉取演员全局统计（/api/actors/stats），供侧栏展示；与当前页/查询无关。 */
+async function loadActorStats() {
+    try {
+        const resp = await fetch(apiUrl('/api/actors/stats'));
+        if (!resp.ok) throw new Error(`目录 API ${resp.status}`);
+        const json = await resp.json();
+        state.actorStats = Array.isArray(json.data) ? json.data : [];
+    } catch (e) {
+        state.actorStats = [];
+        console.warn('加载演员统计失败：', e.message);
+    }
 }
 
 function playHref(code, m) {
@@ -53,7 +67,7 @@ function playHref(code, m) {
     if (m) {
         if (m.title) p.set('title', m.title);
         if (m.cover) p.set('cover', m.cover);
-        if (Array.isArray(m.cast) && m.cast.length) p.set('cast', m.cast.join('|'));
+        if (Array.isArray(m.casts) && m.casts.length) p.set('cast', m.casts.join('|'));
         if (Array.isArray(m.labels) && m.labels.length) p.set('tags', m.labels.join('|'));
         if (m.year != null && m.year !== '') p.set('year', String(m.year));
         if (m.duration != null && m.duration !== '') p.set('duration', String(m.duration));
@@ -136,7 +150,7 @@ function coverInto(box, m) {
 // 关键词搜索走服务端：debounce 后重新请求 /api/movies?q=...，让上游做匹配。
 const SEARCH_DEBOUNCE_MS = 300;
 
-/** 从已加载数据里统计 facet（演员 / 标签），按数量降序。 */
+/** 从已加载数据里统计 facet（标签），按数量降序。 */
 function facets(key) {
     const counter = new Map();
     for (const m of state.movies) {
@@ -146,8 +160,8 @@ function facets(key) {
     return [...counter.entries()].sort((a, b) => b[1] - a[1]);
 }
 
-function toggleLabel(name) {
-    state.labels = state.labels.includes(name) ? [] : [name];
+function toggleCast(name) {
+    state.casts = state.casts.includes(name) ? [] : [name];
     state.page = 1;
     syncUrl();
     load();
@@ -176,7 +190,7 @@ function renderError() {
     more.innerHTML = '';
     const box = el('div', 'state-msg');
     box.innerHTML = state.error
-        ? `${msg}<br><br>请确认已启动 demo 目录 API：<code>python3 /Users/iamshijun/py_workspace/demo/movie-storage/app.py</code><br>并检查 <code>CATALOG_API_BASE</code> 配置。`
+        ? `${msg}<br>请确认已启动 CATALOG_API_BASE配置指定的API。`
         : msg;
     grid.appendChild(box);
     count.textContent = '';
@@ -185,26 +199,43 @@ function renderError() {
 
 function renderChips() {
     chips.innerHTML = '';
-    const all = el('div', 'lib-chip' + (state.labels.length ? '' : ' on'));
+    const all = el('div', 'lib-chip' + (state.casts.length ? '' : ' on'));
     all.appendChild(el('span', null, '全部'));
     all.appendChild(el('i', null, String(state.total)));
-    all.onclick = () => { if (state.labels.length) toggleLabel(state.labels[0]); };
+    all.onclick = () => { if (state.casts.length) toggleCast(state.casts[0]); };
     chips.appendChild(all);
+
+    renderActorChips();
 
     const section = (title, key) => {
         const rows = facets(key);
         if (!rows.length) return;
         chips.appendChild(el('h3', null, title));
         for (const [name, n] of rows.slice(0, 40)) {
-            const chip = el('div', 'lib-chip' + (state.labels.includes(name) ? ' on' : ''));
+            const chip = el('div', 'lib-chip' + (state.casts.includes(name) ? ' on' : ''));
             chip.appendChild(el('span', null, name));
             chip.appendChild(el('i', null, String(n)));
-            chip.onclick = () => toggleLabel(name);
+            chip.onclick = () => toggleCast(name);
             chips.appendChild(chip);
         }
     };
-    section('演员', 'casts');
     section('标签', 'labels');
+}
+
+/** 侧栏「演员」区：使用 /api/actors/stats 的全局统计，而非当前页局部统计。 */
+function renderActorChips() {
+    const list = state.actorStats;
+    if (!list.length) return;
+    chips.appendChild(el('h3', null, '演员'));
+    for (const item of list.slice(0, 40)) {
+        const name = item.actor;
+        const n = item.movie_count;
+        const chip = el('div', 'lib-chip' + (state.casts.includes(name) ? ' on' : ''));
+        chip.appendChild(el('span', null, name));
+        chip.appendChild(el('i', null, String(n)));
+        chip.onclick = () => toggleCast(name);
+        chips.appendChild(chip);
+    }
 }
 
 function makeCard(m) {
@@ -215,18 +246,18 @@ function makeCard(m) {
     card.appendChild(thumb);
     card.appendChild(el('div', 'lib-title', m.title || '(无标题)'));
 
-    if (Array.isArray(m.cast) && m.cast.length) {
+    if (Array.isArray(m.casts) && m.casts.length) {
         const castRow = el('div', 'lib-cast-row');
         castRow.appendChild(el('span', 'lib-cast-label', '演员'));
         const chipsBox = el('div', 'lib-cast-chips');
-        const list = m.cast.slice(0, 5);
+        const list = m.casts.slice(0, 5);
         for (const name of list) {
-            const chip = el('span', 'lib-cast-chip' + (state.labels.includes(name) ? ' on' : ''), name);
-            chip.onclick = (e) => { e.stopPropagation(); toggleLabel(name); };
+            const chip = el('span', 'lib-cast-chip' + (state.casts.includes(name) ? ' on' : ''), name);
+            chip.onclick = (e) => { e.stopPropagation(); toggleCast(name); };
             chipsBox.appendChild(chip);
         }
-        if (m.cast.length > list.length) {
-            const moreChip = el('a', 'lib-cast-chip', `+${m.cast.length - list.length}`);
+        if (m.casts.length > list.length) {
+            const moreChip = el('a', 'lib-cast-chip', `+${m.casts.length - list.length}`);
             moreChip.href = playHref(m.fan_code, m);
             moreChip.onclick = (e) => e.stopPropagation();
             chipsBox.appendChild(moreChip);
@@ -256,7 +287,7 @@ function makeListRow(m) {
     const line2 = el('div', 'lib-row-line2');
     const cast = el('span');
     cast.appendChild(el('b', null, '演员'));
-    cast.appendChild(document.createTextNode(names(m.cast) || '—'));
+    cast.appendChild(document.createTextNode(names(m.casts) || '—'));
     line2.appendChild(cast);
     const tags = el('span');
     tags.appendChild(el('b', null, '标签'));
@@ -331,7 +362,7 @@ btnCard.onclick = () => setViewMode('card');
 // --- 启动 ---
 const qs = new URLSearchParams(location.search);
 state.q = qs.get('q') || '';
-state.labels = (qs.get('labels') || '').split(',').map(s => s.trim()).filter(Boolean);
+state.casts = (qs.get('cast') || '').split(',').map(s => s.trim()).filter(Boolean);
 search.value = state.q;
 let searchTimer = null;
 search.addEventListener('input', () => {
@@ -350,3 +381,5 @@ updateToggle();
 
 render();
 load();
+// 侧栏演员统计独立拉取，完成后只需重画 chips（grid 不受影响）。
+loadActorStats().then(() => renderChips());
