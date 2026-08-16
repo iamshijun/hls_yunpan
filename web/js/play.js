@@ -39,7 +39,8 @@ function hideError() {
 
 function getBaseUrl() {
     if (window.location.protocol === 'file:') return 'http://localhost:9009';
-    return window.location.origin;
+    const m = location.pathname.match(/^(.*?)\/web(?:\/|$)/);
+    return m ? m[1] : '';
 }
 
 function readQuery() {

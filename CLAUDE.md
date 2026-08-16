@@ -55,7 +55,7 @@ Media Player → FastAPI Web Service → HLS Proxy Service → SegmentSource (Lo
    - `RedisFsidStore`: Redis / Upstash (Vercel KV), shared across instances and cold starts
    - Selection priority: **Redis > disk (`CACHE_ENABLED`) > memory**
 
-8. **M3U8 Parser** (`app/utils/m3u8_parser.py`): Owns HLS playlist parsing and URL rewriting. `rewrite()` rewrites relative URIs in bare lines and tag attributes (`#EXT-X-MAP` / `#EXT-X-MEDIA`), and strips `#EXT-X-KEY` (encryption-key) lines by default (`keep_key=True` to keep and rewrite them)
+8. **M3U8 Parser** (`app/utils/m3u8_parser.py`): Owns HLS playlist parsing and URL rewriting. `rewrite()` leaves URIs as-is so chunks resolve relative to the m3u8's own URL (prefix-agnostic — works under any nginx sub-path), and strips `#EXT-X-KEY` (encryption-key) lines by default (`keep_key=True` to keep them)
 
 9. **Catalog Proxy** (`app/routes/catalog.py`): Forwards browser requests to an external catalog API (used by the library home page). Base URL is server-side only (`settings.catalog_api_base`) — clients cannot override it. If `settings.catalog_api_token` is set, the request carries `Authorization: Bearer <token>`. The shared `httpx.AsyncClient` from `app.state.http_client` is reused across requests, with timeout `settings.catalog_timeout`.
 
@@ -217,7 +217,7 @@ Both cloud and local files are accessed through the same proxy URLs:
 
 1. **Async Throughout**: The entire stack uses async/await for I/O operations to maximize performance with concurrent requests
 
-2. **URL Rewriting**: The M3U8 parser (`M3U8Parser.rewrite()`) rewrites playlist URLs so chunks resolve through the proxy. It handles relative URIs in bare lines and tag attributes, and drops `#EXT-X-KEY` (encryption-key) lines by default — pass `keep_key=True` to retain and rewrite them.
+2. **URL Rewriting**: The M3U8 parser (`M3U8Parser.rewrite()`) leaves relative URIs as-is so chunks resolve relative to the m3u8's own URL (prefix-agnostic under nginx sub-paths). It drops `#EXT-X-KEY` (encryption-key) lines by default — pass `keep_key=True` to retain them.
 
 3. **Streaming**: Large files are streamed to prevent timeouts and reduce memory usage
 

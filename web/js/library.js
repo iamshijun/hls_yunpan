@@ -19,6 +19,11 @@ const state = {
     viewMode: 'card',
 };
 
+function getBaseUrl() {
+    const m = location.pathname.match(/^(.*?)\/web(?:\/|$)/);
+    return m ? m[1] : '';
+}
+
 // --- 同步 URL：q / casts 写回；page 暂不同步（避免历史栈污染） ---
 function syncUrl() {
     const p = new URLSearchParams();
@@ -37,7 +42,7 @@ function apiUrl(path, params = {}) {
         else search.set(k, String(v));
     }
     const qs = search.toString();
-    return `${PROXY}${path}${qs ? '?' + qs : ''}`;
+    return `${getBaseUrl()}${PROXY}${path}${qs ? '?' + qs : ''}`;
 }
 
 async function listMovies() {

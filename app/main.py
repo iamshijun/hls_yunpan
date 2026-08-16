@@ -138,7 +138,7 @@ def create_app(
     # 根路径 → /web/（影库首页）
     @app.get("/", include_in_schema=False)
     async def root_redirect():
-        return RedirectResponse(url="/web/")
+        return RedirectResponse(url="web/")
 
     # 路由
     app.include_router(admin.router)

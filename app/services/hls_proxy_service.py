@@ -92,7 +92,7 @@ class HLSProxyService:
             for source in self.sources:
                 result = await source.resolve(request_path, stream=options.stream)
                 if result is not None:
-                    return self._build_response(request_path, result, options)
+                    return self._build_response(result, options)
 
             logger.error(f"未找到文件: {request_path}")
             return Response(
@@ -105,7 +105,7 @@ class HLSProxyService:
             raise HLSProxyError(f"Error: {str(e)}") from e
 
     def _build_response(
-        self, request_path: str, result: SourceResult, options: ServeOptions
+        self, result: SourceResult, options: ServeOptions
     ) -> Response:
         """将源解析结果转换为 HTTP 响应。"""
         if options.stream and result.stream is not None:
@@ -117,7 +117,7 @@ class HLSProxyService:
 
         content = result.content
         if options.rewrite and content is not None:
-            content = self.parser.rewrite(content, request_path)
+            content = self.parser.rewrite(content)
         return self._ok_response(content, options)
 
     def _headers(self, options: ServeOptions) -> dict:
