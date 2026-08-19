@@ -93,7 +93,7 @@ Configuration is handled via `.env` file (see `.env.example` for template). Key 
 - `YUN_PATH_PREFIX`: BaiduYun storage root for HLS files (default: /apps/movies). Request paths under `/hls/{path}` map to `<YUN_PATH_PREFIX>/{path}`.
 - `LOCAL_PATH`: Local HLS file storage directory (default: ./local_hls) - if directory exists, local mode is automatically enabled
 - `REDIS_URL` / `REDIS_TOKEN`: Redis / Upstash (Vercel KV) REST endpoint for cross-instance fsid storage. Also accepts Vercel/Upstash injected names via aliases: `KV_REST_API_URL`/`KV_REST_API_TOKEN` and `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`. When set, fsid is stored in Redis regardless of `CACHE_ENABLED`.
-- `CATALOG_API_BASE`: upstream base for the `/api/catalog/*` proxy that the library home page uses. Default `http://127.0.0.1:8010` (local demo API). Not overridable by clients.
+
 - `CATALOG_API_TOKEN`: optional `Authorization: Bearer` token forwarded to the upstream catalog API.
 - `CATALOG_TIMEOUT`: timeout in seconds for upstream catalog requests (default `10.0`).
 
@@ -125,7 +125,6 @@ Redis are unaffected.
 - **Play Page**: `http://localhost:8000/web/play.html?path={fan_code}` (details passed via URL params: `title/cover/cast|tags|year|duration|description`)
 - **Health Check**: `http://localhost:8000/health`
 - **HLS Proxy**: `http://localhost:8000/hls/{path:path}`
-- **Catalog API Proxy**: `http://localhost:8000/api/catalog/*` (frontend → external catalog API)
 
 
 ### Upload CLI

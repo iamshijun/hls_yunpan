@@ -122,24 +122,7 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
-
-    # 静态文件 — html=True 让 /web/ 自动服务 index.html
-    effective_static_dir = static_dir or (Path(__file__).parent.parent / "web")
-    if effective_static_dir.exists():
-        app.mount(
-            "/web",
-            StaticFiles(directory=str(effective_static_dir), html=True),
-            name="web",
-        )
-        logger.info(f"静态文件已挂载到 /web: {effective_static_dir}")
-    else:
-        logger.warning("Web目录不存在，静态文件服务已禁用")
-
-    # 根路径 → /web/（影库首页）
-    @app.get("/", include_in_schema=False)
-    async def root_redirect():
-        return RedirectResponse(url="web/")
-
+ 
     # 路由
     app.include_router(admin.router)
     app.include_router(catalog.router)

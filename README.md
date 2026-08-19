@@ -127,32 +127,7 @@ http://localhost:8000/hls/video.m3u8
 # 分片文件会自动代理
 http://localhost:8000/hls/segment_0001.ts
 ```
-
-## 影库 / 目录 API
-
-`web/index.html` 是影库首页（变体 A：封面墙 + 顶部搜索 + 左栏 facets）。
-页面通过 `/api/catalog/*` 拉取数据；该路由是后端代理，转发到由
-`CATALOG_API_BASE` 配置的上游目录 API（默认 `http://127.0.0.1:8010`，
-对应本地 demo 目录 API）。
-
-- `/api/catalog/api/movies?page=&size=&labels=&q=` — 列表
-- `/api/catalog/api/movies/{fan_code}` — 单部详情
-
-上游 base 走 `settings.catalog_api_base`，不接受客户端覆盖。
-如果设置了 `CATALOG_API_TOKEN`，转发时自动加 `Authorization: Bearer`。
-请求上游的超时走 `settings.catalog_timeout`。
-
-点击首页任一影片会跳到 `web/play.html?path=...`，把库里的详情（title /
-cover / cast / tags / year / duration / description）通过 URL 参数带过去；
-播放页直接渲染，不用等后端返回。只有 `?path=xxx` 这种老链接才会去
-拉 `GET /metadata/{path}` 补 metadata。
-
-外部 demo 目录 API 不支持 `q`（关键词搜索），所以搜索暂时退化为
-「已加载数据的前端过滤」——搜索框占位符里也明示了这一点，`labels`
-走服务端筛选。
-
-> `prototype/` 目录里是早期的对比原型（3 个变体 / 旧版代理），保留作
-> 参考，不要在生产用。详见 `prototype/README.md`。
+ 
 
 ## 网盘文件组织
 
@@ -183,10 +158,7 @@ cover / cast / tags / year / duration / description）通过 URL 参数带过去
 | `YUN_PATH_PREFIX` | 网盘 HLS 存储根路径（`/hls/{path}` 映射到 `<YUN_PATH_PREFIX>/{path}`） | `/apps/movies` |
 | `LOCAL_PATH` | 本地 HLS 文件目录（存在则自动启用本地模式） | `./local_hls` |
 | `REDIS_URL` / `REDIS_TOKEN` | Redis / Upstash (Vercel KV) 地址，用于跨实例存储 fsid | - |
-| `CATALOG_API_BASE` | 影库首页代理的上游目录 API base | `http://127.0.0.1:8010` |
-| `CATALOG_API_TOKEN` | 转发到上游时透传的 `Authorization: Bearer` token | - |
-| `CATALOG_TIMEOUT` | 请求上游目录 API 的超时（秒） | `10.0` |
-
+ 
 > `REDIS_URL` / `REDIS_TOKEN` 同时兼容 Vercel/Upstash 注入的变量名：
 > `KV_REST_API_URL`/`KV_REST_API_TOKEN` 与 `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`。
 > 一旦配置了 Redis，fsid 将存入 Redis（不受 `CACHE_ENABLED` 影响）。
