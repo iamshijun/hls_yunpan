@@ -8,7 +8,7 @@ import logging
 import os
 from typing import Any, Dict, Optional
 
-from .baiduyun_service import BaiduYunService
+from .baiduyun_service import BaiduYunService, YunNotFoundError
 from ..utils.metadata_parser import parse_metadata
 
 logger = logging.getLogger(__name__)
@@ -52,9 +52,10 @@ class MetadataService:
         yun_dir = f"{self.yun_prefix}/{clean_path}"
         try:
             files = await self.yun.search_file(key=METADATA_FILENAME, dir_path=yun_dir)
-        except Exception as e:
-            logger.error(f"search metadata 失败 [{yun_dir}]: {e}")
+        except YunNotFoundError as e:
+            logger.info(f"metadata 目录不存在 [{yun_dir}]: {e}")
             return None
+        # 其他错误（认证/限流/网络等）向上抛，由路由映射 502/500，而不是误报 404
 
         match = next(
             (f for f in files if os.path.basename(f.get("path", "")) == METADATA_FILENAME),
@@ -67,8 +68,8 @@ class MetadataService:
         path = match.get("path")
         try:
             content = await self.yun.download_file(path, fsid=fsid)
-        except Exception as e:
-            logger.error(f"下载 metadata 失败 [{path}]: {e}")
+        except YunNotFoundError as e:
+            logger.info(f"metadata 文件不存在 [{path}]: {e}")
             return None
 
         try:

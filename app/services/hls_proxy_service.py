@@ -6,7 +6,7 @@ import os
 import logging
 from .baiduyun_service import BaiduYunService
 from .cache_service import CacheService
-from .segment_source import SegmentSource, LocalSource, YunSource, SourceResult
+from .segment_source import SegmentSource, LocalSource, YunSource, BytesBody
 from ..utils.m3u8_parser import M3U8Parser
 
 logger = logging.getLogger(__name__)
@@ -18,11 +18,14 @@ class HLSProxyError(Exception):
 
 @dataclass(frozen=True)
 class ServeOptions:
-    """HLS 文件响应选项 - m3u8 与分片流程的差异点。"""
+    """HLS 文件响应选项 - m3u8 与分片流程的差异点。
+
+    rewrite=True 时（m3u8）需要整份内容做 URL 重写，故先缓冲成 bytes；
+    否则直接 StreamingResponse 流式返回分片。
+    """
     media_type: str
     cache_header: str
-    rewrite: bool = False               # 是否需要重写 m3u8 中的 URL
-    stream: bool = False                # 是否流式返回（分片）
+    rewrite: bool = False               # 是否需要重写 m3u8 中的 URL（隐式决定缓冲）
 
 
 class HLSProxyService:
@@ -82,7 +85,6 @@ class HLSProxyService:
             ServeOptions(
                 media_type="video/mp2t",
                 cache_header=cache_header,
-                stream=True,
             ),
         )
 
@@ -90,9 +92,9 @@ class HLSProxyService:
         """流水线 - 依次尝试各内容源，命中后构建 HTTP 响应。"""
         try:
             for source in self.sources:
-                result = await source.resolve(request_path, stream=options.stream)
-                if result is not None:
-                    return self._build_response(result, options)
+                body = await source.resolve(request_path)
+                if body is not None:
+                    return await self._build_response(body, options)
 
             logger.error(f"未找到文件: {request_path}")
             return Response(
@@ -104,21 +106,23 @@ class HLSProxyService:
             logger.error(f"处理HLS请求失败 [{request_path}]: {e}", exc_info=True)
             raise HLSProxyError(f"Error: {str(e)}") from e
 
-    def _build_response(
-        self, result: SourceResult, options: ServeOptions
+    async def _build_response(
+        self, body: BytesBody, options: ServeOptions
     ) -> Response:
-        """将源解析结果转换为 HTTP 响应。"""
-        if options.stream and result.stream is not None:
-            return StreamingResponse(
-                result.stream,
-                media_type=options.media_type,
-                headers=self._headers(options),
-            )
+        """将源解析结果转换为 HTTP 响应。
 
-        content = result.content
-        if options.rewrite and content is not None:
+        需要重写（m3u8）时把内容体缓冲成 bytes 再重写；否则流式返回分片。
+        """
+        if options.rewrite:
+            content = b"".join([chunk async for chunk in body])
             content = self.parser.rewrite(content)
-        return self._ok_response(content, options)
+            return self._ok_response(content, options)
+
+        return StreamingResponse(
+            body,
+            media_type=options.media_type,
+            headers=self._headers(options),
+        )
 
     def _headers(self, options: ServeOptions) -> dict:
         """构建响应头"""

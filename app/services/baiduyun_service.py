@@ -19,6 +19,39 @@ _UPLOAD_TIMEOUT = 600.0
 UPLOAD_URL = "https://d.pcs.baidu.com/rest/2.0/pcs/file"
 
 
+class YunAPIError(Exception):
+    """BaiduYun API 错误（errno != 0）。errno 保留在异常上供调用方分类。"""
+
+    def __init__(self, errno: int, message: str = ""):
+        self.errno = errno
+        self.message = message or f"BaiduYun API error (errno={errno})"
+        super().__init__(self.message)
+
+
+class YunNotFoundError(YunAPIError):
+    """文件/目录确定不存在 —— 应映射为 404，而不是 500。"""
+
+
+class YunAuthError(YunAPIError):
+    """认证失败（access_token 无效/过期）—— 应映射为 500/502，而不是 404。"""
+
+
+# errno 分类。百度网盘 xpan 常见返回码：-9 文件不存在、-12 目录不存在、-6 身份验证失败。
+# 无法 100% 确定某些 errno 的语义，这里只收窄确定的一小撮；其余一律按通用 API 错误处理，
+# 避免把认证/限流误判成「文件不存在」而返回 404。
+NOT_FOUND_ERRNOS = {-9, -12}
+AUTH_ERRNOS = {-6}
+
+
+def _classify_errno(errno: int, message: str = "") -> YunAPIError:
+    """按 errno 分派到具体异常类型；未归类的一律返回通用 YunAPIError。"""
+    if errno in NOT_FOUND_ERRNOS:
+        return YunNotFoundError(errno, message)
+    if errno in AUTH_ERRNOS:
+        return YunAuthError(errno, message)
+    return YunAPIError(errno, message)
+
+
 class BaiduYunService:
     """百度网盘服务类"""
 
@@ -92,8 +125,10 @@ class BaiduYunService:
             data = response.json()
 
             if data.get("errno") != 0:
-                logger.error(f"获取文件列表失败: {data.get('errmsg', 'Unknown error')}")
-                return []
+                errno = data.get("errno")
+                message = data.get("errmsg", "Unknown error")
+                logger.error(f"获取文件列表失败: {message} (errno={errno})")
+                raise _classify_errno(errno, message)
 
             return data.get("list", [])
         except Exception as e:
@@ -127,14 +162,14 @@ class BaiduYunService:
             response.raise_for_status()
             data = response.json()
             if data.get("errno") != 0:
-                logger.warning(
-                    f"search failed: {data.get('errmsg')} (errno={data.get('errno')})"
-                )
-                return []
+                errno = data.get("errno")
+                message = data.get("errmsg", "Unknown error")
+                logger.warning(f"search failed: {message} (errno={errno})")
+                raise _classify_errno(errno, message)
             return data.get("list", [])
         except Exception as e:
             logger.error(f"搜索文件失败 [{dir_path} / {key}]: {e}")
-            return []
+            raise
 
     async def download_file(self, file_path: str, fsid: Optional[int] = None) -> bytes:
         """
@@ -236,14 +271,17 @@ class BaiduYunService:
 
         data = response.json()
         if data.get("errno") != 0:
-            logger.error(f"获取下载链接失败: {data.get('errmsg', 'Unknown error')}")
-            raise Exception(f"获取下载链接失败: {data}")
+            errno = data.get("errno")
+            message = data.get("errmsg", "Unknown error")
+            logger.error(f"获取下载链接失败: {message} (errno={errno})")
+            raise _classify_errno(errno, message)
 
         # 返回第一个文件的dlink
         if "list" in data and len(data["list"]) > 0:
             return data["list"][0].get("dlink")
 
-        return None
+        # filemetas 成功但列表为空 → 该 fsid 不存在（确定性的 miss，映射 404）
+        raise YunNotFoundError(-9, f"文件不存在: {file_path}")
 
     def _get_headers(self) -> dict:
         """构建请求头"""
