@@ -24,12 +24,12 @@ Media Player → FastAPI Web Service → HLS Proxy Service → SegmentSource (Lo
 
 **Key Components:**
 
-1. **FastAPI Application** (`app/main.py`): Provides `create_app()` factory (used by both local and Vercel entry points), lifecycle management, static file mounting, and service initialization. The module-level `app = create_app()` instance is shared by local uvicorn and the Vercel serverless entry.
+1. **FastAPI Application** (`app/main.py`): Provides `create_app()` factory (used by both local and Vercel entry points), lifecycle management, and service initialization. The module-level `app = create_app()` instance is shared by local uvicorn and the Vercel serverless entry.
 
 2. **Vercel Entry** (`api/index.py`): Minimal serverless entry that just does `from app.main import app`. Vercel's `@vercel/python` runtime hosts this ASGI app directly, so local and Vercel run the exact same application.
 
 3. **HLS Proxy Service** (`app/services/hls_proxy_service.py`): Thin request pipeline that:
-   - Composes `SegmentSource` adapters (local vs cloud) and serves each request from the first that can
+   - Selects a single `SegmentSource` (local vs cloud) and serves each request from it
    - Handles m3u8 playlist and .ts chunk requests — chunks stream, playlists buffer and get URL-rewritten
    - Builds HTTP responses; internal failures raise `HLSProxyError`, mapped to JSON 500 by an exception handler
    - Wired to routes via `Depends(get_hls_service)`, which reads the service from `app.state`
@@ -39,10 +39,10 @@ Media Player → FastAPI Web Service → HLS Proxy Service → SegmentSource (Lo
    - `YunSource`: serves from BaiduYun — converts request paths to yun paths, resolves fsids (with directory-level batch loading), reads/writes the content cache, and streams chunks
    - Local mode is authoritative: when `LOCAL_PATH` exists only local files are served, and missing files return 404 (the cloud is never contacted)
 
-5. **BaiduYun Service** (`app/services/baiduyun_service.py`): External API integration layer that:
-   - Handles all communication with BaiduYun REST API (list, meta, download, stream, upload)
-   - Provides streaming download for large files and uploads with exponential-backoff retry (`upload_file` / `upload_bytes`)
-   - Owns endpoint URLs, token handling, and `errno` decoding in one place
+5. **BaiduYun Service** (`app/services/baiduyun_service.py`): External API integration layer (read side) that:
+   - Handles BaiduYun REST API list/search/download/stream, owns endpoint URLs, token handling, and `errno` decoding in one place
+   - Provides streaming download for large files
+   - Upload (with exponential-backoff retry) lives in `app/services/baiduyun_upload.py` (`BaiduYunUploader`), used only by the CLI
 
 6. **Cache Service** (`app/services/cache_service.py`): Performance optimization layer with:
    - Local file content caching to reduce API calls (controlled by `CACHE_ENABLED`)
@@ -55,7 +55,7 @@ Media Player → FastAPI Web Service → HLS Proxy Service → SegmentSource (Lo
    - `RedisFsidStore`: Redis / Upstash (Vercel KV), shared across instances and cold starts
    - Selection priority: **Redis > disk (`CACHE_ENABLED`) > memory**
 
-8. **M3U8 Parser** (`app/utils/m3u8_parser.py`): Owns HLS playlist parsing and URL rewriting. `rewrite()` leaves URIs as-is so chunks resolve relative to the m3u8's own URL (prefix-agnostic — works under any nginx sub-path), and strips `#EXT-X-KEY` (encryption-key) lines by default (`keep_key=True` to keep them)
+8. **M3U8 Parser** (`app/utils/m3u8_parser.py`): Owns HLS playlist URL rewriting. `rewrite_m3u8()` leaves URIs as-is so chunks resolve relative to the m3u8's own URL (prefix-agnostic — works under any nginx sub-path), and strips `#EXT-X-KEY` (encryption-key) lines by default (`keep_key=True` to keep them)
 
 9. **Catalog Proxy** (`app/routes/catalog.py`): Forwards browser requests to an external catalog API (used by the library home page). Base URL is server-side only (`settings.catalog_api_base`) — clients cannot override it. If `settings.catalog_api_token` is set, the request carries `Authorization: Bearer <token>`. The shared `httpx.AsyncClient` from `app.state.http_client` is reused across requests, with timeout `settings.catalog_timeout`.
 
@@ -63,10 +63,11 @@ Media Player → FastAPI Web Service → HLS Proxy Service → SegmentSource (Lo
 
 ### Quick Start
 ```bash
-# Using the provided startup script (runs on port 9009)
+# Using the provided startup script (port from .env, default 8000)
 ./start.sh
 
 # Or manually
+python -m app.main
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
@@ -81,11 +82,12 @@ pip install -r requirements.txt
 ```
 
 ### Configuration
-Configuration is handled via `.env` file (see `.env.example` for template). Key settings:
+Configuration is handled via `.env` file (see `.env.example` for template). `start.sh` sources `.env` before launching. Key settings:
 - `ACCESS_TOKEN`: BaiduYun access token (required)
+- `APP_NAME` / `APP_VERSION`: surfaced by `/` (default: `Yunpan HLS Proxy` / `1.0.0`)
 - `DEBUG`: Debug mode (default: True). Also controls whether `/docs` & `/redoc` are exposed.
 - `HOST`: Server host (default: 0.0.0.0)
-- `PORT`: Server port (default: 8000, but start.sh uses 9009)
+- `PORT`: Server port (default: 8000)
 - `CACHE_DIR`: Cache directory (default: ./cache)
 - `CACHE_TTL`: Cache TTL in seconds (default: 3600)
 - `CACHE_ENABLED`: Whether disk caching is enabled (default: True). Set to `False` on read-only filesystems (e.g. Vercel) to skip all disk writes.
@@ -94,13 +96,15 @@ Configuration is handled via `.env` file (see `.env.example` for template). Key 
 - `LOCAL_PATH`: Local HLS file storage directory (default: ./local_hls) - if directory exists, local mode is automatically enabled
 - `REDIS_URL` / `REDIS_TOKEN`: Redis / Upstash (Vercel KV) REST endpoint for cross-instance fsid storage. Also accepts Vercel/Upstash injected names via aliases: `KV_REST_API_URL`/`KV_REST_API_TOKEN` and `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`. When set, fsid is stored in Redis regardless of `CACHE_ENABLED`.
 
+- `CATALOG_API_BASE`: upstream catalog API base URL (default `http://127.0.0.1:8010`, i.e. `movie_api`).
 - `CATALOG_API_TOKEN`: optional `Authorization: Bearer` token forwarded to the upstream catalog API.
 - `CATALOG_TIMEOUT`: timeout in seconds for upstream catalog requests (default `10.0`).
+- `HTTPX_LOG`: whether to log httpx request URLs (default: False).
 
 Settings are managed in `config/settings.py` using pydantic-settings.
 
 ### Vercel Deployment
-The project deploys to Vercel from the **repository root** (not a subfolder), so `app/`, `config/`, and `web/` are all importable.
+The project deploys to Vercel from the **repository root** (not a subfolder), so `app/` and `config/` are importable.
 
 - Entry point: `api/index.py` (`from app.main import app`)
 - Config: `vercel.json` (routes all paths to `/api/index`, sets memory/maxDuration)
@@ -121,8 +125,9 @@ Note: `upstash-redis` is imported lazily inside `RedisFsidStore`, so local runs 
 Redis are unaffected.
 
 ### Access Points
-- **Library Home**: `http://localhost:8000/` (redirects to `/web/`) or `http://localhost:8000/web/`
-- **Play Page**: `http://localhost:8000/web/play.html?path={fan_code}` (details passed via URL params: `title/cover/cast|tags|year|duration|description`)
+The web UI is static files under the top-level `movie_web/` (served separately — `hls_yunpan` does not mount a static directory).
+- **Library Home**: `movie_web/index.html`
+- **Play Page**: `movie_web/play.html?path={fan_code}` (details passed via URL params: `title/cover/cast/tags/year/duration/description`, comma or `|` separated)
 - **Health Check**: `http://localhost:8000/health`
 - **HLS Proxy**: `http://localhost:8000/hls/{path:path}`
 
@@ -134,7 +139,7 @@ python -m app.upload video.ts --retries 5
 python -m app.upload ./my_videos /apps/movies/my_videos -w 5
 python -m app.upload ./my_videos /apps/movies/my_videos --max-size 100MB --no-resume -o overwrite
 ```
-Upload logic (including retry) lives in `BaiduYunService`; the CLI is a thin argparse shell
+Upload logic (including retry) lives in `BaiduYunUploader` (`app/services/baiduyun_upload.py`); the CLI is a thin argparse shell
 (progress, resume, and parallel workers). Use `--no-delete-after-upload` to keep the local file.
 
 ## Project Structure
@@ -151,7 +156,8 @@ hls_yunpan/
 │   │   ├── hls.py          # HLS proxy route handlers
 │   │   └── metadata.py     # metadata.txt reader
 │   ├── services/
-│   │   ├── baiduyun_service.py   # BaiduYun REST API client (list/download/stream/upload)
+│   │   ├── baiduyun_service.py   # BaiduYun REST API client (read side: list/search/download/stream)
+│   │   ├── baiduyun_upload.py    # BaiduYunUploader (CLI-only upload with retry)
 │   │   ├── cache_service.py      # File content cache + fsid delegation
 │   │   ├── fsid_store.py         # FsidStore abstraction (Memory/Disk/Redis)
 │   │   ├── hls_proxy_service.py  # Thin HLS request pipeline
@@ -159,17 +165,11 @@ hls_yunpan/
 │   │   └── segment_source.py     # SegmentSource seam (LocalSource / YunSource)
 │   ├── upload.py                 # Standalone CLI to upload files/dirs to BaiduYun
 │   └── utils/
-│       └── m3u8_parser.py        # HLS playlist parse / rewrite / generate
+│       ├── m3u8_parser.py        # M3U8 rewrite (strip EXT-X-KEY)
+│       ├── metadata_parser.py    # metadata.txt parser
+│       └── paths.py              # HLS URL prefix / strip / local-mode helpers
 ├── config/settings.py      # Pydantic settings (single source)
-├── web/
-│   ├── index.html          # Library home (cover wall + filters)
-│   ├── play.html           # Play page (supports inline detail + /metadata/{path} fallback)
-│   ├── css/
-│   │   ├── library.css     # Library home styles
-│   │   └── play.css        # Play page styles
-│   └── js/
-│       ├── library.js      # Library home logic
-│       └── play.js         # Play page logic
+├── ... (the frontend lives in top-level `movie_web/`, not under `web/`)
 ├── prototype/              # Reference prototypes — do NOT use in production
 │   ├── README.md
 │   ├── home.html
@@ -216,7 +216,7 @@ Both cloud and local files are accessed through the same proxy URLs:
 
 1. **Async Throughout**: The entire stack uses async/await for I/O operations to maximize performance with concurrent requests
 
-2. **URL Rewriting**: The M3U8 parser (`M3U8Parser.rewrite()`) leaves relative URIs as-is so chunks resolve relative to the m3u8's own URL (prefix-agnostic under nginx sub-paths). It drops `#EXT-X-KEY` (encryption-key) lines by default — pass `keep_key=True` to retain them.
+2. **URL Rewriting**: The M3U8 parser (`rewrite_m3u8()`) leaves relative URIs as-is so chunks resolve relative to the m3u8's own URL (prefix-agnostic under nginx sub-paths). It drops `#EXT-X-KEY` (encryption-key) lines by default — pass `keep_key=True` to retain them.
 
 3. **Streaming**: Large files are streamed to prevent timeouts and reduce memory usage
 
@@ -234,10 +234,10 @@ Both cloud and local files are accessed through the same proxy URLs:
 
 ## Development Notes
 
-- The project uses Uvicorn with auto-reload (`--reload`) for development
+- The project runs via `python -m app.main` (uvicorn with auto-reload when `DEBUG=true`)
 - Logging is configured based on the `DEBUG` setting
-- The library home at `web/index.html` (variant A) and the play page at `web/play.html` are static files mounted under `/web/`. The play page uses hls.js for modern browsers and falls back to native HLS support for Safari.
-- When navigating from the library to a movie, `web/library.js` packs detail fields into the URL (cast/tags joined with `|`); the play page reads them and renders immediately, falling back to `GET /metadata/{path}` only when no detail params are present.
+- The library home (`movie_web/index.html`) and the play page (`movie_web/play.html`) are static files served separately — `hls_yunpan` does not mount a static directory. The play page uses hls.js for modern browsers and falls back to native HLS support for Safari.
+- When navigating from the library to a movie, `movie_web/js/library.js` packs detail fields into the URL (cast/tags comma-joined); the play page reads them and renders immediately — there is no `/metadata/{path}` frontend fallback.
 - BaiduYun API has rate limits; the caching layer helps mitigate this
 - `prototype/` is a frozen reference of an earlier 3-variant prototype. Do not route production traffic through it; if you need to re-evaluate the home page, see `prototype/README.md`.
 
