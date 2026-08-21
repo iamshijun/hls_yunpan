@@ -14,7 +14,7 @@ Baidu Yunpan upload tool (standalone CLI).
     # Keep local file after upload
     python -m app.upload video.ts --no-delete-after-upload
 
-上传逻辑（含重试）由 app.services.baiduyun_service.BaiduYunService 提供，
+上传逻辑（含重试）由 app.services.baiduyun_upload.BaiduYunUploader 提供，
 本模块只是参数解析与进度展示的 CLI 外壳。
 """
 
@@ -30,7 +30,7 @@ from dotenv import load_dotenv
 from tqdm import tqdm
 
 from config.settings import settings
-from app.services.baiduyun_service import BaiduYunService
+from app.services.baiduyun_upload import BaiduYunUploader
 
 
 # ── Constants ──────────────────────────────────────────────────────────────
@@ -129,7 +129,7 @@ def _clear_progress(local_dir: Path) -> None:
 # ── Single-file upload ─────────────────────────────────────────────────────
 
 async def upload_file(
-    svc: BaiduYunService,
+    svc: BaiduYunUploader,
     local_path: str,
     remote_path: str,
     ondup: str,
@@ -189,7 +189,7 @@ async def upload_file(
 # ── Directory upload ───────────────────────────────────────────────────────
 
 async def upload_directory(
-    svc: BaiduYunService,
+    svc: BaiduYunUploader,
     local_dir: str,
     remote_dir: str,
     ondup: str,
@@ -493,7 +493,7 @@ async def _run(args: argparse.Namespace) -> None:
     else:
         remote_path = f"{DEFAULT_REMOTE_PREFIX}/{path_arg.name}"
 
-    async with BaiduYunService(access_token=token) as svc:
+    async with BaiduYunUploader(access_token=token) as svc:
         if path_arg.is_dir():
             await upload_directory(
                 svc,
