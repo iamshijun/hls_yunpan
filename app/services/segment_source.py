@@ -10,7 +10,7 @@
   需要重写（m3u8）时缓冲成 bytes，否则直接 StreamingResponse。
 
 组合方式决定请求由谁服务：本地模式时仅使用 LocalSource（缺失即 404），
-否则使用 YunSource。流水线（HLSProxyService）按顺序尝试各源，命中即响应。
+否则使用 YunSource。
 """
 import asyncio
 import logging
@@ -22,12 +22,9 @@ import aiofiles
 
 from .baiduyun_service import BaiduYunService, YunNotFoundError
 from .cache_service import CacheService
+from ..utils.paths import HLS_URL_PREFIX, strip_hls_prefix
 
 logger = logging.getLogger(__name__)
-
-# 路由前缀固定为 /hls（见 app/routes/hls.py => APIRouter(prefix="/hls", ...），请求路径始终以此开头，
-# 各源剥掉该前缀后映射到自己的内容根（本地磁盘 / 网盘）。
-HLS_URL_PREFIX = "/hls"
 
 # 一个可流式读取的内容体：async iterator，逐块产出字节。
 BytesBody = AsyncIterator[bytes]
@@ -62,10 +59,9 @@ class LocalSource(SegmentSource):
         return self._stream_file(file_path)
 
     def _get_local_file_path(self, request_path: str) -> str:
-        """将请求路径映射到本地文件路径。(截掉hls route前缀)"""
-        if request_path.startswith(HLS_URL_PREFIX):
-            request_path = request_path[len(HLS_URL_PREFIX):]
-        return os.path.join(self.local_path, request_path.lstrip('/'))
+        """将请求路径映射到本地文件路径。（截掉 hls route 前缀）"""
+        rel = strip_hls_prefix(request_path)
+        return os.path.join(self.local_path, rel.lstrip('/'))
 
     def _stream_file(self, file_path: str) -> BytesBody:
         async def gen():
@@ -111,10 +107,9 @@ class YunSource(SegmentSource):
         return self._stream_and_cache_chunk(yun_path, fsid)
 
     def _convert_to_yun_path(self, request_path: str) -> str:
-        """将请求路径转换为网盘路径。(截掉hls route前缀,后面的即为云盘的路径)"""
-        if request_path.startswith(HLS_URL_PREFIX):
-            request_path = request_path[len(HLS_URL_PREFIX):]
-        return f"{self.yun_path_prefix}{request_path}"
+        """将请求路径转换为网盘路径。（截掉 hls route 前缀，后面即为云盘的路径）"""
+        rel = strip_hls_prefix(request_path)
+        return f"{self.yun_path_prefix}{rel}"
 
     def _bytes_body(self, content: bytes) -> BytesBody:
         async def gen():
@@ -166,14 +161,19 @@ class YunSource(SegmentSource):
             return None
 
     async def _stream_and_cache_chunk(self, yun_path: str, fsid: int) -> BytesBody:
-        """流式下载分片文件并产出字节块，结束后自动写入了本地缓存。"""
-        chunks: list[bytes] = []
-        async for chunk in self.yun_service.stream_download(yun_path, fsid=fsid):
-            chunks.append(chunk)
-            yield chunk
+        """流式下载分片文件并产出字节块。
 
+        需要缓存分片（cache_segments）时才累积整份内容，结束后写入缓存；
+        否则直接透传每个字节块，避免把整个分片放进内存。
+        """
         if self.cache_segments:
+            chunks: list[bytes] = []
+            async for chunk in self.yun_service.stream_download(yun_path, fsid=fsid):
+                chunks.append(chunk)
+                yield chunk
             full = b"".join(chunks)
             await self.cache_service.set(yun_path, full)
         else:
-            logger.debug(f"分片缓存已禁用，跳过缓存: {yun_path}")
+            logger.debug(f"分片缓存已禁用，直接流式透传: {yun_path}")
+            async for chunk in self.yun_service.stream_download(yun_path, fsid=fsid):
+                yield chunk

@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 
 from .baiduyun_service import BaiduYunService, YunNotFoundError
 from ..utils.metadata_parser import parse_metadata
+from ..utils.paths import is_local_mode
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ class MetadataService:
     ):
         self.yun = yun_service
         self.yun_prefix = yun_path_prefix.rstrip("/")
-        self.local_mode = bool(local_path) and os.path.isdir(local_path)
+        self.local_mode = is_local_mode(local_path)
         self.local_path = local_path
 
     async def get_metadata(self, clean_path: str) -> Optional[Dict[str, Any]]:

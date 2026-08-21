@@ -3,10 +3,11 @@ from fastapi import APIRouter, Request, HTTPException, Depends
 import logging
 
 from ..services.hls_proxy_service import HLSProxyService
+from ..utils.paths import HLS_URL_PREFIX
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/hls", tags=["HLS"])
+router = APIRouter(prefix=HLS_URL_PREFIX, tags=["HLS"])
 
 def get_hls_service(request: Request) -> HLSProxyService:
     """从应用状态获取 HLS 代理服务实例（由 lifespan 注入）"""
@@ -35,7 +36,7 @@ async def hls_proxy(
         文件内容
     """
     # 构建完整路径
-    request_path = f"/hls/{path}"
+    request_path = f"{HLS_URL_PREFIX}/{path}"
 
     # 判断文件类型
     if path.endswith('.m3u8'):
