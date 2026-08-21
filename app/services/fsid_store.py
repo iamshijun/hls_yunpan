@@ -12,7 +12,6 @@ fsid 是百度网盘文件的唯一 id（file_path -> fsid），属于体积小�
 import os
 import json
 import time
-import asyncio
 import hashlib
 import inspect
 import logging
@@ -129,7 +128,7 @@ class DiskFsidStore(FsidStore):
         dir_path = os.path.dirname(file_path) or "/"
         data = await self._load_dir(dir_path)
         data[file_path] = {"fsid": fsid, "timestamp": time.time()}
-        asyncio.create_task(self._save_dir(dir_path))
+        await self._save_dir(dir_path)
 
     async def set_many(self, fsid_map: Dict[str, int]) -> None:
         now = time.time()
@@ -140,7 +139,7 @@ class DiskFsidStore(FsidStore):
             data[fp] = {"fsid": fsid, "timestamp": now}
             touched.add(dir_path)
         for dir_path in touched:
-            asyncio.create_task(self._save_dir(dir_path))
+            await self._save_dir(dir_path)
 
 
 class RedisFsidStore(FsidStore):

@@ -8,7 +8,7 @@ import logging
 import hashlib
 import time
 
-from .fsid_store import FsidStore, DiskFsidStore, MemoryFsidStore
+from .fsid_store import FsidStore
 
 logger = logging.getLogger(__name__)
 
@@ -22,31 +22,24 @@ class CacheService:
 
     def __init__(
         self,
+        fsid_store: FsidStore,
         cache_dir: str = "./cache",
         ttl: int = 3600,
         enabled: bool = True,
-        fsid_store: Optional[FsidStore] = None,
     ):
         """
         Args:
+            fsid_store: fsid 存储后端（由调用方按配置创建，此处只负责委托）。
             cache_dir: 缓存目录
             ttl: 缓存过期时间(秒)
             enabled: 是否启用磁盘缓存。为 False 时（如 Vercel 只读文件系统）
                      跳过所有文件内容磁盘读写。
-            fsid_store: fsid 存储后端。未提供时按 enabled 选择磁盘/内存。
         """
         self.cache_dir = Path(cache_dir)
         self.ttl = ttl
         self.enabled = enabled
         self.locks = {}  # 文件锁
-
-        # fsid 存储后端（可注入 Redis 等）
-        if fsid_store is not None:
-            self.fsid_store = fsid_store
-        elif enabled:
-            self.fsid_store = DiskFsidStore(cache_dir, ttl=ttl)
-        else:
-            self.fsid_store = MemoryFsidStore(ttl=ttl)
+        self.fsid_store = fsid_store
 
         # 创建缓存目录（仅在启用磁盘缓存时）
         if self.enabled:
@@ -79,11 +72,6 @@ class CacheService:
         if fsid is not None:
             logger.info(f"fsid缓存命中: {file_path} -> {fsid}")
         return fsid
-
-    async def set_fsid(self, file_path: str, fsid: int) -> None:
-        """设置文件的fsid"""
-        await self.fsid_store.set(file_path, fsid)
-        logger.info(f"fsid缓存已写入: {file_path} -> {fsid}")
 
     async def set_fsids(self, dir_path: str, fsid_map: Dict[str, int]) -> None:
         """批量设置fsid映射 {file_path: fsid}"""
@@ -183,56 +171,3 @@ class CacheService:
         except Exception as e:
             logger.error(f"写入缓存失败: {e}")
             raise
-
-    async def delete(self, path: str) -> None:
-        """
-        删除缓存
-
-        Args:
-            path: 原始路径
-        """
-        cache_path = self._get_cache_path(path)
-        meta_path = self._get_meta_path(path)
-
-        try:
-            if cache_path.exists():
-                cache_path.unlink()
-            if meta_path.exists():
-                meta_path.unlink()
-            logger.info(f"缓存已删除: {path}")
-        except Exception as e:
-            logger.error(f"删除缓存失败: {e}")
-
-    async def clear_expired(self) -> int:
-        """
-        清理过期的文件内容缓存（fsid 过期由 fsid_store 自行管理）
-
-        Returns:
-            清理的文件数量
-        """
-        if not self.enabled:
-            return 0
-        count = 0
-        try:
-            # 清理文件缓存
-            for meta_path in self.cache_dir.rglob("*.meta"):
-                try:
-                    async with aiofiles.open(meta_path, 'r') as f:
-                        content = await f.read()
-                        meta = json.loads(content)
-
-                    # 检查是否过期
-                    if time.time() - meta.get("timestamp", 0) >= self.ttl:
-                        cache_path = meta_path.with_suffix("")
-                        if cache_path.exists():
-                            cache_path.unlink()
-                        meta_path.unlink()
-                        count += 1
-                except Exception as e:
-                    logger.error(f"清理缓存失败 [{meta_path}]: {e}")
-
-            logger.info(f"清理了 {count} 个过期缓存")
-        except Exception as e:
-            logger.error(f"清理过期缓存失败: {e}")
-
-        return count

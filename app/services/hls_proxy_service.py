@@ -2,12 +2,13 @@
 from dataclasses import dataclass
 from fastapi import Response
 from fastapi.responses import StreamingResponse
-import os
 import logging
+
 from .baiduyun_service import BaiduYunService
 from .cache_service import CacheService
 from .segment_source import SegmentSource, LocalSource, YunSource, BytesBody
-from ..utils.m3u8_parser import M3U8Parser
+from ..utils.m3u8_parser import rewrite_m3u8
+from ..utils.paths import is_local_mode
 
 logger = logging.getLogger(__name__)
 
@@ -44,24 +45,18 @@ class HLSProxyService:
         local_path: str = "./local_hls"
     ):
         self.cache_segments = cache_segments
-        self.parser = M3U8Parser()
 
-        # 组合内容源：本地模式权威（缺失即404），否则使用网盘
-        self.local_mode = os.path.exists(local_path) and os.path.isdir(local_path)
-        if self.local_mode:
-            self.sources: list[SegmentSource] = [
-                LocalSource(local_path=local_path)
-            ]
+        # 内容源：本地模式权威（缺失即404），否则使用网盘
+        if is_local_mode(local_path):
+            self.source: SegmentSource = LocalSource(local_path=local_path)
             logger.info(f"本地模式已启用，仅使用本地目录: {local_path}")
         else:
-            self.sources = [
-                YunSource(
-                    yun_service=yun_service,
-                    cache_service=cache_service,
-                    yun_path_prefix=yun_path_prefix,
-                    cache_segments=cache_segments,
-                )
-            ]
+            self.source = YunSource(
+                yun_service=yun_service,
+                cache_service=cache_service,
+                yun_path_prefix=yun_path_prefix,
+                cache_segments=cache_segments,
+            )
             logger.info(f"本地目录{local_path}不存在或不可访问，将使用网盘模式")
 
     async def handle_m3u8_request(self, request_path: str) -> Response:
@@ -89,12 +84,11 @@ class HLSProxyService:
         )
 
     async def _serve(self, request_path: str, options: ServeOptions) -> Response:
-        """流水线 - 依次尝试各内容源，命中后构建 HTTP 响应。"""
+        """流水线 - 用唯一内容源解析请求，命中后构建 HTTP 响应。"""
         try:
-            for source in self.sources:
-                body = await source.resolve(request_path)
-                if body is not None:
-                    return await self._build_response(body, options)
+            body = await self.source.resolve(request_path)
+            if body is not None:
+                return await self._build_response(body, options)
 
             logger.error(f"未找到文件: {request_path}")
             return Response(
@@ -115,7 +109,7 @@ class HLSProxyService:
         """
         if options.rewrite:
             content = b"".join([chunk async for chunk in body])
-            content = self.parser.rewrite(content)
+            content = rewrite_m3u8(content)
             return self._ok_response(content, options)
 
         return StreamingResponse(
