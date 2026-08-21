@@ -1,13 +1,11 @@
 """主应用入口"""
 import logging
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import Optional
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 
 from config.settings import settings
 from app.services.baiduyun_service import BaiduYunService
@@ -37,14 +35,12 @@ def _configure_httpx_log(enabled: bool) -> None:
 def create_app(
     cache_dir: Optional[str] = None,
     docs_enabled: Optional[bool] = None,
-    static_dir: Optional[Path] = None,
 ) -> FastAPI:
     """创建并配置FastAPI应用实例
 
     Args:
         cache_dir: 缓存目录，默认使用 settings.cache_dir
         docs_enabled: 是否启用 API 文档，默认等于 settings.debug
-        static_dir: 静态文件目录，默认使用项目根目录的 web/ 文件夹
     """
     if docs_enabled is None:
         docs_enabled = settings.debug
@@ -122,7 +118,7 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
- 
+
     # 路由
     app.include_router(admin.router)
     app.include_router(catalog.router)
