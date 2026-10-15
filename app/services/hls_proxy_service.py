@@ -40,7 +40,7 @@ class HLSProxyService:
         self,
         yun_service: BaiduYunService,
         cache_service: CacheService,
-        yun_path_prefix: str = "/apps/movies",
+        yun_path_prefix: str = "/apps/asitanokibou/movies",
         cache_segments: bool = False,
         local_path: str = "./local_hls"
     ):

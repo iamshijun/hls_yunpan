@@ -131,10 +131,10 @@ http://localhost:8000/hls/segment_0001.ts
 
 ## 网盘文件组织
 
-在百度网盘中，HLS文件应按 `YUN_PATH_PREFIX`（默认 `/apps/movies`）组织：
+在百度网盘中，HLS文件应按 `YUN_PATH_PREFIX`（默认 `/apps/asitanokibou/movies`）组织：
 
 ```
-/apps/movies/
+/apps/asitanokibou/movies/
 ├── video1.m3u8
 ├── video1/
 │   ├── segment_0001.ts
@@ -155,7 +155,7 @@ http://localhost:8000/hls/segment_0001.ts
 | `CACHE_TTL` | 缓存过期时间(秒) | `3600` |
 | `CACHE_ENABLED` | 是否启用磁盘缓存（只读文件系统如 Vercel 设为 `false`） | `True` |
 | `CACHE_SEGMENTS` | 是否缓存 HLS 分片文件 | `False` |
-| `YUN_PATH_PREFIX` | 网盘 HLS 存储根路径（`/hls/{path}` 映射到 `<YUN_PATH_PREFIX>/{path}`） | `/apps/movies` |
+| `YUN_PATH_PREFIX` | 网盘 HLS 存储根路径（`/hls/{path}` 映射到 `<YUN_PATH_PREFIX>/{path}`） | `/apps/asitanokibou/movies` |
 | `LOCAL_PATH` | 本地 HLS 文件目录（存在则自动启用本地模式） | `./local_hls` |
 | `REDIS_URL` / `REDIS_TOKEN` | Redis / Upstash (Vercel KV) 地址，用于跨实例存储 fsid | - |
  
@@ -172,10 +172,10 @@ http://localhost:8000/hls/segment_0001.ts
 python -m app.upload video.ts --retries 5
 
 # 上传目录（5 并发 + 断点续传）
-python -m app.upload ./my_videos /apps/movies/my_videos -w 5
+python -m app.upload ./my_videos /apps/asitanokibou/movies/my_videos -w 5
 
 # 跳过超过 100MB 的文件、不续传、覆盖同名
-python -m app.upload ./my_videos /apps/movies/my_videos --max-size 100MB --no-resume -o overwrite
+python -m app.upload ./my_videos /apps/asitanokibou/movies/my_videos --max-size 100MB --no-resume -o overwrite
 ```
 
 上传逻辑（含重试）由 `BaiduYunService` 提供，CLI 只负责参数解析与进度展示。默认上传成功后删除本地文件，加 `--no-delete-after-upload` 保留。

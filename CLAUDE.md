@@ -92,7 +92,7 @@ Configuration is handled via `.env` file (see `.env.example` for template). `sta
 - `CACHE_TTL`: Cache TTL in seconds (default: 3600)
 - `CACHE_ENABLED`: Whether disk caching is enabled (default: True). Set to `False` on read-only filesystems (e.g. Vercel) to skip all disk writes.
 - `CACHE_SEGMENTS`: Whether to cache HLS segment files (default: False)
-- `YUN_PATH_PREFIX`: BaiduYun storage root for HLS files (default: /apps/movies). Request paths under `/hls/{path}` map to `<YUN_PATH_PREFIX>/{path}`.
+- `YUN_PATH_PREFIX`: BaiduYun storage root for HLS files (default: /apps/{app_name}/movies). Request paths under `/hls/{path}` map to `<YUN_PATH_PREFIX>/{path}`.
 - `LOCAL_PATH`: Local HLS file storage directory (default: ./local_hls) - if directory exists, local mode is automatically enabled
 - `REDIS_URL` / `REDIS_TOKEN`: Redis / Upstash (Vercel KV) REST endpoint for cross-instance fsid storage. Also accepts Vercel/Upstash injected names via aliases: `KV_REST_API_URL`/`KV_REST_API_TOKEN` and `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`. When set, fsid is stored in Redis regardless of `CACHE_ENABLED`.
 
@@ -136,8 +136,8 @@ The web UI is static files under the top-level `movie_web/` (served separately �
 Upload local files/directories to BaiduYun (default target root is `YUN_PATH_PREFIX`):
 ```bash
 python -m app.upload video.ts --retries 5
-python -m app.upload ./my_videos /apps/movies/my_videos -w 5
-python -m app.upload ./my_videos /apps/movies/my_videos --max-size 100MB --no-resume -o overwrite
+python -m app.upload ./my_videos /apps/asitanokibou/movies/my_videos -w 5
+python -m app.upload ./my_videos /apps/asitanokibou/movies/my_videos --max-size 100MB --no-resume -o overwrite
 ```
 Upload logic (including retry) lives in `BaiduYunUploader` (`app/services/baiduyun_upload.py`); the CLI is a thin argparse shell
 (progress, resume, and parallel workers). Use `--no-delete-after-upload` to keep the local file.
@@ -182,9 +182,9 @@ hls_yunpan/
 ```
 
 ### BaiduYun Cloud Storage
-HLS files in BaiduYun should be organized under `YUN_PATH_PREFIX` (default `/apps/movies`):
+HLS files in BaiduYun should be organized under `YUN_PATH_PREFIX` (default `/apps/asitanokibou/movies`):
 ```
-/apps/movies/
+/apps/asitanokibou/movies/
 ├── video1/
 |   |-- playlist.m3u8
 │   ├── segment_0001
